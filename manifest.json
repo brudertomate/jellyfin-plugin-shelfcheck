@@ -1,1 +1,20 @@
-[]
+[
+  {
+    "guid": "787553a2-52ba-476a-8393-8c5d2fe89ce5",
+    "name": "ShelfCheck",
+    "description": "Liest Bibliothekspfade und meldet fehlende Videos, lokale Poster und Staffelordner im Admin-Dashboard.",
+    "overview": "Bestandsprüfung für Film- und Serienbibliotheken.",
+    "owner": "brudertomate",
+    "category": "General",
+    "versions": [
+      {
+        "version": "1.0.0.0",
+        "targetAbi": "12.4.0.0",
+        "sourceUrl": "https://github.com/brudertomate/jellyfin-plugin-shelfcheck/releases/download/v1.0.0.0/ShelfCheck-1.0.0.0.zip",
+        "checksum": "50bff9b2ced90c56bc79c6080b8d37c8",
+        "timestamp": "2026-11-22T11:51:56Z",
+        "changelog": "https://github.com/brudertomate/jellyfin-plugin-shelfcheck/releases/tag/v1.0.0.0"
+      }
+    ]
+  }
+]
