@@ -8,7 +8,7 @@
     <p>Prüft die lokalen Videos, Titelposter und Staffelordner deiner Bibliotheken.</p>
     <button is="emby-button" class="raised button-submit" data-action="start" disabled>Scan starten</button>
     <button is="emby-button" class="raised" data-action="stop" hidden>Scan abbrechen</button>
-    <p role="status" data-id="status">Aufgabe wird geladen …</p>
+    <p role="status" data-id="status">Scanstatus wird geladen …</p>
     <p role="alert" data-id="error"></p>
     <h2>Letzter abgeschlossener Scan</h2>
     <p data-id="summary">Bericht wird geladen …</p>
@@ -41,7 +41,7 @@
     const button = name => page.querySelector('[data-action="' + name + '"]');
     const labels = { NoVideo: 'Ohne Video', MissingCover: 'Poster fehlt', MissingSeason: 'Staffelordner fehlt', Unchecked: 'Ungeprüft', Layout: 'Ablage prüfen' };
     const limit = 50;
-    let offset = 0, sequence = 0, timer, typing, taskId, previousRun, generation = 0;
+    let offset = 0, sequence = 0, timer, typing, previousRun, generation = 0;
     let active = false, changing = false;
     function error(e) { field('error').textContent = 'Abruf fehlgeschlagen. ' + (e.message || e.statusText || 'Bitte erneut versuchen.'); }
     function cell(text) { const td = document.createElement('td'); td.textContent = text; return td; }
@@ -81,31 +81,27 @@
     async function refresh(id) {
       clearTimeout(timer);
       try {
-        const task = taskId ? await ApiClient.getJSON(ApiClient.getUrl('ScheduledTasks/' + taskId)) :
-          (await ApiClient.getJSON(ApiClient.getUrl('ScheduledTasks'))).find(t => t.Key === 'ShelfCheckScan');
+        const task = await ApiClient.getJSON(ApiClient.getUrl('ShelfCheck/Scan'));
         if (!active || id !== generation) return;
-        if (!task) throw new Error('ShelfCheck-Aufgabe nicht gefunden.');
-        taskId = task.Id;
         const busy = task.State !== 'Idle';
         button('start').disabled = busy || changing;
         button('stop').hidden = !busy;
         button('stop').disabled = task.State !== 'Running' || changing;
-        const result = task.LastExecutionResult || {};
-        const states = { Completed: 'Abgeschlossen', Failed: 'Fehlgeschlagen', Cancelled: 'Abgebrochen', Aborted: 'Unterbrochen' };
+        const states = { Completed: 'Abgeschlossen', Failed: 'Fehlgeschlagen', Cancelled: 'Abgebrochen' };
         field('status').textContent = busy ? (task.State === 'Cancelling' ? 'Abbruch läuft …' :
-          'Scan läuft · ' + Math.floor(task.CurrentProgressPercentage || 0) + ' %') :
-          result.Status ? 'Letzter Lauf · ' + (states[result.Status] || result.Status) : 'Bereit';
-        const run = result.EndTimeUtc || '';
+          'Scan läuft · ' + task.Progress + ' %') :
+          task.Result ? 'Letzter Lauf · ' + states[task.Result] : 'Bereit';
+        const run = task.FinishedRuns;
         if (run !== previousRun) { previousRun = run; await loadReport(); }
       } catch (e) { if (active && id === generation) error(e); }
       finally { if (active && id === generation) timer = setTimeout(() => refresh(id), 2500); }
     }
     async function change(method) {
-      if (changing || !taskId) return;
+      if (changing) return;
       changing = true;
       button('start').disabled = button('stop').disabled = true;
       field('error').textContent = '';
-      try { await ApiClient.fetch({ url: ApiClient.getUrl('ScheduledTasks/Running/' + taskId), type: method }); }
+      try { await ApiClient.fetch({ url: ApiClient.getUrl('ShelfCheck/Scan'), type: method }); }
       catch (e) { error(e); }
       finally { changing = false; if (active) refresh(++generation); }
     }

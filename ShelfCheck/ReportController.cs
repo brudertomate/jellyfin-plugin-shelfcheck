@@ -7,8 +7,22 @@ namespace ShelfCheck;
 [ApiController]
 [Route("ShelfCheck")]
 [Authorize(Policy = Policies.RequiresElevation)]
-public sealed class ReportController(ReportStore store) : ControllerBase
+public sealed class ReportController(ReportStore store, ManualScan scan) : ControllerBase
 {
+    [HttpGet("Scan")]
+    [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
+    public ScanStatus GetScan() => scan.Status;
+
+    [HttpPost("Scan")]
+    public IActionResult StartScan() => scan.TryStart() ? Accepted() : Conflict();
+
+    [HttpDelete("Scan")]
+    public IActionResult CancelScan()
+    {
+        scan.Cancel();
+        return NoContent();
+    }
+
     [HttpGet("Report")]
     [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
     public IActionResult Get([FromQuery] string? code, [FromQuery] string? library, [FromQuery] string? search,

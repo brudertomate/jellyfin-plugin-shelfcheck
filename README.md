@@ -14,7 +14,7 @@ Gebaut für Jellyfin Server **12.4** und .NET 10.
    ```
 
 3. Im Plugin-Katalog **ShelfCheck** installieren und Jellyfin neu starten.
-4. Die Plugin-Seite **ShelfCheck** öffnen und **Scan starten** wählen. Zeitpläne und Abbruch sind auch über **Geplante Aufgaben → ShelfCheck → Medienbestand prüfen** erreichbar. Bei der Installation ist kein Zeitplan aktiviert.
+4. Die Plugin-Seite **ShelfCheck** öffnen. Sie zeigt den letzten gespeicherten Bericht. Jeder neue Scan beginnt mit einem Klick auf **Scan starten**. Während des Laufs kannst du **Scan abbrechen** wählen.
 
 Jellyfin bezieht kompatible Plugin-Updates über dieselbe URL. Unter Docker braucht der Jellyfin-Prozess Lesezugriff auf die eingebundenen Medienpfade.
 

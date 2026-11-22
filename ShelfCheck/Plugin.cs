@@ -21,5 +21,5 @@ public sealed class Plugin(IApplicationPaths paths, IXmlSerializer serializer)
 public sealed class Services : IPluginServiceRegistrator
 {
     public void RegisterServices(IServiceCollection services, IServerApplicationHost host) =>
-        services.AddSingleton<ReportStore>();
+        services.AddSingleton<ReportStore>().AddSingleton<ManualScan>();
 }
