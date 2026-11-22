@@ -1,0 +1,209 @@
+using System.Globalization;
+using System.Text.RegularExpressions;
+
+namespace ShelfCheck;
+
+public sealed partial class Scanner(IEnumerable<string> videoExtensions)
+{
+    private static readonly StringComparer Names = StringComparer.OrdinalIgnoreCase;
+    private static readonly HashSet<string> ImageExtensions = new([".jpg", ".jpeg", ".png", ".webp", ".tbn"], Names);
+    private static readonly string[] PosterNames = ["poster", "folder", "cover", "default"];
+    private readonly HashSet<string> _videoExtensions = new(videoExtensions, Names);
+    private readonly Report _report = new();
+    private CancellationToken _token;
+    private LibraryRoot _root = null!;
+
+    [GeneratedRegex(@"^(?:(?:season|staffel|series|s)[ ._-]*(?<number>\d{1,4})|(?<special>specials|extraspecials))$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex SeasonName();
+
+    private sealed class Listing
+    {
+        public List<DirectoryInfo> Children { get; } = [];
+        public List<string> Videos { get; } = [];
+        public HashSet<string> Images { get; } = new(Names);
+        public bool Complete { get; set; } = true;
+        public bool Ignored { get; set; }
+    }
+
+    public Report Scan(List<LibraryRoot> roots, IProgress<double> progress, CancellationToken token)
+    {
+        _token = token;
+        _report.Roots.AddRange(roots);
+        var lastPercent = -1;
+        for (int i = 0; i < roots.Count; i++)
+        {
+            _token.ThrowIfCancellationRequested();
+            _root = roots[i];
+            var directory = new DirectoryInfo(_root.Path);
+            var listing = Read(directory);
+            if (listing.Ignored) continue;
+            if (_root.Type != "tvshows")
+            {
+                foreach (var video in listing.Videos)
+                {
+                    _token.ThrowIfCancellationRequested();
+                    _report.Titles++;
+                    if (listing.Complete && !HasNamedPoster(listing, video))
+                        Add(Path.Combine(directory.FullName, video), "Videodatei", "MissingCover", "Dateibezogenes Poster fehlt.");
+                }
+            }
+            else if (listing.Videos.Count > 0)
+                Add(directory.FullName, "Bibliothek", "Layout", "Videodateien direkt im Serien-Bibliothekspfad.");
+
+            for (int j = 0; j < listing.Children.Count; j++)
+            {
+                CheckTitle(listing.Children[j]);
+                var percent = (int)(99.0 * (i + (j + 1.0) / listing.Children.Count) / roots.Count);
+                if (percent != lastPercent)
+                {
+                    progress.Report(percent);
+                    lastPercent = percent;
+                }
+            }
+        }
+
+        _token.ThrowIfCancellationRequested();
+        _report.Findings.Sort((a, b) =>
+        {
+            var order = string.CompareOrdinal(a.Library, b.Library);
+            if (order == 0) order = string.CompareOrdinal(a.Path, b.Path);
+            return order == 0 ? string.CompareOrdinal(a.Code, b.Code) : order;
+        });
+        _report.FinishedUtc = DateTime.UtcNow;
+        return _report;
+    }
+
+    private void CheckTitle(DirectoryInfo directory)
+    {
+        var listing = Read(directory);
+        if (listing.Ignored) return;
+        _report.Titles++;
+        var series = _root.Type == "tvshows" || (_root.Type == "mixed" && listing.Children.Any(d => SeasonName().IsMatch(d.Name)));
+        var kind = series ? "Serie" : _root.Type == "movies" ? "Film" : "Titel";
+        var hasSeason = false;
+        var complete = listing.Complete;
+        var videos = listing.Videos.Count;
+        foreach (var child in listing.Children)
+        {
+            var season = series ? SeasonName().Match(child.Name) : Match.Empty;
+            hasSeason |= season.Success;
+            var childListing = Read(child);
+            if (childListing.Ignored)
+            {
+                complete = false;
+                continue;
+            }
+
+            var result = ScanSubtree(childListing, 1);
+            videos += result.Videos;
+            complete &= result.Complete;
+            if (season.Success)
+            {
+                _report.Seasons++;
+                var number = season.Groups["special"].Success ? 0 : int.Parse(season.Groups["number"].Value, CultureInfo.InvariantCulture);
+                var prefix = number == 0 ? "season-specials" : "season" + number.ToString("00", CultureInfo.InvariantCulture);
+                if (childListing.Complete && listing.Complete && !HasCover(childListing, "season") &&
+                    !listing.Images.Contains(prefix + "-poster") && !listing.Images.Contains(child.Name.Replace(" ", "") + "-poster"))
+                    Add(child.FullName, "Staffel", "MissingCover", "Weder Staffelcover noch zugehöriges Poster im Serienordner gefunden.");
+                if (result is { Videos: 0, Complete: true })
+                    Add(child.FullName, "Staffel", "NoVideo", "Keine Videodatei im Staffelordner oder seinen Unterordnern.");
+            }
+        }
+
+        if (complete && videos == 0)
+            Add(directory.FullName, kind, "NoVideo", "Keine Videodatei im Titelordner oder seinen Unterordnern.");
+        if (listing.Complete && !HasCover(listing, series ? "show" : "movie"))
+            Add(directory.FullName, kind, "MissingCover", "Lokales Titelposter fehlt.");
+        if (series && !hasSeason && listing.Complete)
+            Add(directory.FullName, kind, "MissingSeason", "Kein Staffelordner erkannt. Flache Episodenablage ist möglich.");
+    }
+
+    private static bool HasCover(Listing listing, string alternate) =>
+        PosterNames.Any(listing.Images.Contains) || listing.Images.Contains(alternate)
+        || (alternate == "movie" && listing.Videos.Any(video => HasNamedPoster(listing, video)));
+
+    private static bool HasNamedPoster(Listing listing, string video)
+    {
+        var stem = Path.GetFileNameWithoutExtension(video);
+        return listing.Images.Contains(stem) || PosterNames.Any(name => listing.Images.Contains(stem + "-" + name));
+    }
+
+    private (int Videos, bool Complete) ScanSubtree(Listing listing, int depth)
+    {
+        var count = listing.Videos.Count;
+        var complete = listing.Complete && !listing.Ignored;
+        foreach (var child in listing.Children)
+        {
+            if (depth >= 96)
+            {
+                Add(child.FullName, "Pfad", "Unchecked", "Maximale Verzeichnistiefe erreicht.");
+                complete = false;
+                continue;
+            }
+
+            var result = ScanSubtree(Read(child), depth + 1);
+            count += result.Videos;
+            complete &= result.Complete;
+        }
+
+        return (count, complete);
+    }
+
+    private Listing Read(DirectoryInfo directory)
+    {
+        _token.ThrowIfCancellationRequested();
+        var listing = new Listing();
+        try
+        {
+            if (directory.Attributes.HasFlag(FileAttributes.ReparsePoint) && directory.Exists)
+            {
+                Skip("Verzeichnisverknüpfung nicht verfolgt.");
+                return listing;
+            }
+
+            _report.Directories++;
+            foreach (var entry in directory.EnumerateFileSystemInfos("*", new EnumerationOptions
+                     { IgnoreInaccessible = false, AttributesToSkip = 0 }))
+            {
+                _token.ThrowIfCancellationRequested();
+                if (entry.Name == ".ignore")
+                {
+                    Skip("Ordner mit .ignore übersprungen.");
+                    return listing;
+                }
+
+                if (entry is DirectoryInfo subdirectory)
+                    listing.Children.Add(subdirectory);
+                else if (_videoExtensions.Contains(entry.Extension) || ImageExtensions.Contains(entry.Extension))
+                {
+                    if (entry.Attributes.HasFlag(FileAttributes.ReparsePoint) && entry.ResolveLinkTarget(true)?.Exists != true)
+                    {
+                        listing.Complete = false;
+                        Add(entry.FullName, "Datei", "Unchecked", "Ziel der Dateiverknüpfung nicht erreichbar.");
+                    }
+                    else if (_videoExtensions.Contains(entry.Extension))
+                        listing.Videos.Add(entry.Name);
+                    else
+                        listing.Images.Add(Path.GetFileNameWithoutExtension(entry.Name));
+                }
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException)
+        {
+            listing.Complete = false;
+            Add(directory.FullName, "Pfad", "Unchecked", ex.Message);
+        }
+
+        _report.Videos += listing.Videos.Count;
+        return listing;
+
+        void Skip(string detail)
+        {
+            listing = new Listing { Ignored = true, Complete = false };
+            Add(directory.FullName, "Pfad", "Unchecked", detail);
+        }
+    }
+
+    private void Add(string path, string kind, string code, string detail) =>
+        _report.Findings.Add(new(_root.Library, path, kind, code, detail));
+}

@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="de">
+<head><title>ShelfCheck</title></head>
+<body>
+<div id="shelfCheckPage" data-role="page" class="page type-interior pluginConfigurationPage" data-require="emby-button,emby-input,emby-select">
+  <div data-role="content"><div class="content-primary">
+    <h1>ShelfCheck</h1>
+    <p>Prüft die lokalen Videos, Titelposter und Staffelordner deiner Bibliotheken.</p>
+    <button is="emby-button" class="raised button-submit" data-action="start" disabled>Scan starten</button>
+    <button is="emby-button" class="raised" data-action="stop" hidden>Scan abbrechen</button>
+    <p role="status" data-id="status">Aufgabe wird geladen …</p>
+    <p role="alert" data-id="error"></p>
+    <h2>Letzter abgeschlossener Scan</h2>
+    <p data-id="summary">Bericht wird geladen …</p>
+    <section data-id="report" hidden>
+      <details><summary>Geprüfte Bibliothekspfade</summary><ul data-id="roots"></ul></details>
+      <div style="display:flex;flex-wrap:wrap;gap:1em;margin:1.5em 0;align-items:end">
+        <label>Bibliothek<select is="emby-select" data-id="library"><option value="">Alle Bibliotheken</option></select></label>
+        <label>Befund<select is="emby-select" data-id="code">
+          <option value="">Alle Befunde</option><option value="NoVideo">Ohne Video</option>
+          <option value="MissingCover">Poster fehlt</option><option value="MissingSeason">Staffelordner fehlt</option>
+          <option value="Unchecked">Ungeprüft</option><option value="Layout">Ablage prüfen</option>
+        </select></label>
+        <label>Pfad durchsuchen<input is="emby-input" type="search" data-id="search"></label>
+      </div>
+      <div style="overflow-x:auto"><table style="width:100%;text-align:left;border-spacing:0 .7em">
+        <thead><tr><th>Befund</th><th>Bibliothek</th><th>Typ</th><th>Pfad</th></tr></thead><tbody data-id="rows"></tbody>
+      </table></div>
+      <p data-id="range" aria-live="polite"></p>
+      <button is="emby-button" class="raised" data-action="back">Zurück</button>
+      <button is="emby-button" class="raised" data-action="next">Weiter</button>
+    </section>
+  </div></div>
+  <script>
+  (function () {
+    const pages = document.querySelectorAll('#shelfCheckPage');
+    const page = pages[pages.length - 1];
+    if (page.dataset.ready) return;
+    page.dataset.ready = '1';
+    const field = name => page.querySelector('[data-id="' + name + '"]');
+    const button = name => page.querySelector('[data-action="' + name + '"]');
+    const labels = { NoVideo: 'Ohne Video', MissingCover: 'Poster fehlt', MissingSeason: 'Staffelordner fehlt', Unchecked: 'Ungeprüft', Layout: 'Ablage prüfen' };
+    const limit = 50;
+    let offset = 0, sequence = 0, timer, typing, taskId, previousRun, generation = 0;
+    let active = false, changing = false;
+    function error(e) { field('error').textContent = 'Abruf fehlgeschlagen. ' + (e.message || e.statusText || 'Bitte erneut versuchen.'); }
+    function cell(text) { const td = document.createElement('td'); td.textContent = text; return td; }
+    async function loadReport() {
+      const current = ++sequence;
+      try {
+        const data = await ApiClient.getJSON(ApiClient.getUrl('ShelfCheck/Report', {
+          code: field('code').value, library: field('library').value, search: field('search').value, offset, limit
+        }));
+        if (!active || current !== sequence) return;
+        field('report').hidden = !data.Available;
+        if (!data.Available) {
+          field('summary').textContent = 'Noch kein Bericht vorhanden. Starte den ersten Scan.';
+          return;
+        }
+        field('summary').textContent = new Date(data.FinishedUtc).toLocaleString('de-DE') + ' · ' + data.Directories + ' Ordner · ' +
+          data.Titles + ' Titel · ' + data.Seasons + ' Staffeln · ' + data.Videos + ' Videodateien · ' + data.Total + ' Befunde';
+        const lib = field('library'), selected = lib.value;
+        lib.replaceChildren(new Option('Alle Bibliotheken', ''));
+        for (const name of new Set(data.Roots.map(r => r.Library))) lib.add(new Option(name, name));
+        lib.value = selected;
+        const roots = data.Roots.map(r => { const li = document.createElement('li'); li.textContent = r.Library + ' · ' + r.Path; return li; });
+        field('roots').replaceChildren(...roots);
+        field('rows').replaceChildren(...data.Items.map(item => {
+          const tr = document.createElement('tr'), path = cell(item.Path);
+          path.style.overflowWrap = 'anywhere';
+          const kind = cell(labels[item.Code] || item.Code);
+          const detail = document.createElement('small'); detail.style.display = 'block'; detail.textContent = item.Detail;
+          kind.append(detail); tr.append(kind, cell(item.Library), cell(item.Kind), path); return tr;
+        }));
+        offset = data.Offset;
+        field('range').textContent = data.Filtered ? (offset + 1) + '–' + (offset + data.Items.length) + ' von ' + data.Filtered + ' Befunden' : 'Keine passenden Befunde.';
+        button('back').disabled = offset === 0;
+        button('next').disabled = offset + limit >= data.Filtered;
+      } catch (e) { if (active && current === sequence) error(e); }
+    }
+    async function refresh(id) {
+      clearTimeout(timer);
+      try {
+        const task = taskId ? await ApiClient.getJSON(ApiClient.getUrl('ScheduledTasks/' + taskId)) :
+          (await ApiClient.getJSON(ApiClient.getUrl('ScheduledTasks'))).find(t => t.Key === 'ShelfCheckScan');
+        if (!active || id !== generation) return;
+        if (!task) throw new Error('ShelfCheck-Aufgabe nicht gefunden.');
+        taskId = task.Id;
+        const busy = task.State !== 'Idle';
+        button('start').disabled = busy || changing;
+        button('stop').hidden = !busy;
+        button('stop').disabled = task.State !== 'Running' || changing;
+        const result = task.LastExecutionResult || {};
+        const states = { Completed: 'Abgeschlossen', Failed: 'Fehlgeschlagen', Cancelled: 'Abgebrochen', Aborted: 'Unterbrochen' };
+        field('status').textContent = busy ? (task.State === 'Cancelling' ? 'Abbruch läuft …' :
+          'Scan läuft · ' + Math.floor(task.CurrentProgressPercentage || 0) + ' %') :
+          result.Status ? 'Letzter Lauf · ' + (states[result.Status] || result.Status) : 'Bereit';
+        const run = result.EndTimeUtc || '';
+        if (run !== previousRun) { previousRun = run; await loadReport(); }
+      } catch (e) { if (active && id === generation) error(e); }
+      finally { if (active && id === generation) timer = setTimeout(() => refresh(id), 2500); }
+    }
+    async function change(method) {
+      if (changing || !taskId) return;
+      changing = true;
+      button('start').disabled = button('stop').disabled = true;
+      field('error').textContent = '';
+      try { await ApiClient.fetch({ url: ApiClient.getUrl('ScheduledTasks/Running/' + taskId), type: method }); }
+      catch (e) { error(e); }
+      finally { changing = false; if (active) refresh(++generation); }
+    }
+    button('start').onclick = () => change('POST');
+    button('stop').onclick = () => change('DELETE');
+    button('back').onclick = () => { offset = Math.max(0, offset - limit); loadReport(); };
+    button('next').onclick = () => { offset += limit; loadReport(); };
+    for (const name of ['library', 'code']) field(name).onchange = () => { offset = 0; loadReport(); };
+    field('search').oninput = () => { clearTimeout(typing); typing = setTimeout(() => { offset = 0; loadReport(); }, 250); };
+    function show() { if (active) return; active = true; previousRun = undefined; refresh(++generation); }
+    function hide() { active = false; ++sequence; ++generation; clearTimeout(timer); clearTimeout(typing); }
+    page.addEventListener('viewshow', show); page.addEventListener('viewhide', hide);
+    page.addEventListener('pageshow', show); page.addEventListener('pagehide', hide);
+    show();
+  })();
+  </script>
+</div>
+</body></html>

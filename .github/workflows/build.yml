@@ -1,0 +1,63 @@
+name: Build and release
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - run: dotnet build ShelfCheck/ShelfCheck.csproj -c Release
+      - run: dotnet run --project checks/ScannerChecks.csproj -c Release
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency: shelfcheck-catalog
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Paket bauen
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          dotnet publish ShelfCheck/ShelfCheck.csproj -c Release -o out -p:Version="$version" -p:AssemblyVersion="$version"
+          (cd out && zip "../ShelfCheck-$version.zip" Jellyfin.Plugin.ShelfCheck.dll)
+      - name: Release veröffentlichen
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
+            gh release create "$GITHUB_REF_NAME" "ShelfCheck-$VERSION.zip" --verify-tag --title "ShelfCheck $VERSION" --generate-notes
+          else
+            gh release download "$GITHUB_REF_NAME" --pattern "ShelfCheck-$VERSION.zip" --clobber
+          fi
+      - name: Jellyfin-Katalog aktualisieren
+        run: |
+          git fetch origin main
+          git show origin/main:manifest.json > manifest.json
+          python3 .github/scripts/update_manifest.py "$VERSION" "ShelfCheck-$VERSION.zip"
+          cp manifest.json "$RUNNER_TEMP/shelfcheck-manifest.json"
+          git restore manifest.json
+          git switch -C main origin/main
+          cp "$RUNNER_TEMP/shelfcheck-manifest.json" manifest.json
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add manifest.json
+          git commit -m "ShelfCheck $VERSION im Plugin-Katalog veröffentlichen"
+          git push origin main
