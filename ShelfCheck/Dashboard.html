@@ -5,6 +5,11 @@
 <div id="shelfCheckPage" data-role="page" class="page type-interior pluginConfigurationPage" data-require="emby-button,emby-input,emby-select">
   <div data-role="content"><div class="content-primary">
     <h1>ShelfCheck</h1>
+    <nav aria-label="ShelfCheck" style="display:flex;gap:.5em;flex-wrap:wrap;margin-bottom:1.5em">
+      <button is="emby-button" class="raised button-submit" data-pane="files" aria-pressed="true">Dateibestand</button>
+      <button is="emby-button" class="raised" data-pane="dates" aria-pressed="false">Datumsabgleich</button>
+    </nav>
+    <section data-panel="files">
     <p>Prüft die lokalen Videos, Titelposter und Staffelordner deiner Bibliotheken.</p>
     <button is="emby-button" class="raised button-submit" data-action="start" disabled>Scan starten</button>
     <button is="emby-button" class="raised" data-action="stop" hidden>Scan abbrechen</button>
@@ -18,6 +23,7 @@
         <label>Bibliothek<select is="emby-select" data-id="library"><option value="">Alle Bibliotheken</option></select></label>
         <label>Befund<select is="emby-select" data-id="code">
           <option value="">Alle Befunde</option><option value="NoVideo">Ohne Video</option>
+          <option value="OnlyExtras">Nur Trailer und Extras</option>
           <option value="MissingCover">Poster fehlt</option><option value="MissingSeason">Staffelordner fehlt</option>
           <option value="Unchecked">Ungeprüft</option><option value="Layout">Ablage prüfen</option>
         </select></label>
@@ -30,6 +36,48 @@
       <button is="emby-button" class="raised" data-action="back">Zurück</button>
       <button is="emby-button" class="raised" data-action="next">Weiter</button>
     </section>
+    </section>
+    <section data-panel="dates" hidden>
+      <h2>Hinzugefügt am</h2>
+      <p>Überträgt das vorhandene Veröffentlichungsdatum von Filmen, Serien und Episoden. Wähle die Bibliotheken aus, die geändert werden dürfen.</p>
+      <fieldset data-date="libraries"><legend>Freigegebene Bibliotheken</legend></fieldset>
+      <button is="emby-button" class="raised" data-date="save" disabled>Auswahl speichern</button>
+      <div style="display:flex;flex-wrap:wrap;gap:.5em;margin-top:1.5em">
+        <button is="emby-button" class="raised" data-date="preview" disabled>Vorschau für gesamten Bestand</button>
+        <button is="emby-button" class="raised button-submit" data-date="apply" disabled>Datumsabgleich starten</button>
+        <button is="emby-button" class="raised" data-date="pause" hidden>Nach aktuellem Eintrag pausieren</button>
+        <button is="emby-button" class="raised button-submit" data-date="resume" hidden>Fortsetzen</button>
+        <button is="emby-button" class="raised" data-date="end" hidden>Lauf beenden</button>
+      </div>
+      <p role="status" data-date="status">Wird geladen …</p>
+      <p role="alert" data-date="error"></p>
+      <h2>Laufverlauf</h2>
+      <label>Lauf <select is="emby-select" data-date="history"><option value="">Noch keine Läufe</option></select></label>
+      <section data-date="report" hidden>
+        <p data-date="counts"></p>
+        <p data-date="note"></p>
+        <button is="emby-button" class="raised" data-date="copy">Bericht kopieren</button>
+        <button is="emby-button" class="raised" data-date="undo" hidden>Änderungen dieses Laufs rückgängig machen</button>
+        <div data-date="copyfallback" hidden>
+          <label>Bericht zum Kopieren<textarea data-date="text" rows="8" readonly style="display:block;width:100%"></textarea></label>
+        </div>
+        <p><label>Ergebnis <select is="emby-select" data-date="outcome">
+          <option value="">Änderungen und Hinweise</option><option value="Proposed">Würde ändern</option>
+          <option value="Changed">Geändert</option><option value="Unchanged">Bereits passend</option>
+          <option value="Missing">Datum fehlt</option><option value="Skipped">Übersprungen</option>
+          <option value="Conflict">Zwischenzeitlich geändert</option><option value="Failed">Fehlgeschlagen</option>
+          <option value="Restored">Wiederhergestellt</option>
+        </select></label></p>
+        <div style="overflow-x:auto">
+          <table style="width:100%;text-align:left;border-spacing:0 .7em">
+            <thead><tr><th>Eintrag</th><th>Vorher</th><th>Ziel</th><th>Ergebnis</th></tr></thead><tbody data-date="rows"></tbody>
+          </table>
+        </div>
+        <p data-date="range" aria-live="polite"></p>
+        <button is="emby-button" class="raised" data-date="back">Zurück</button>
+        <button is="emby-button" class="raised" data-date="next">Weiter</button>
+      </section>
+    </section>
   </div></div>
   <script>
   (function () {
@@ -39,7 +87,7 @@
     page.dataset.ready = '1';
     const field = name => page.querySelector('[data-id="' + name + '"]');
     const button = name => page.querySelector('[data-action="' + name + '"]');
-    const labels = { NoVideo: 'Ohne Video', MissingCover: 'Poster fehlt', MissingSeason: 'Staffelordner fehlt', Unchecked: 'Ungeprüft', Layout: 'Ablage prüfen' };
+    const labels = { NoVideo: 'Ohne Video', OnlyExtras: 'Nur Trailer und Extras', MissingCover: 'Poster fehlt', MissingSeason: 'Staffelordner fehlt', Unchecked: 'Ungeprüft', Layout: 'Ablage prüfen' };
     const limit = 50;
     let offset = 0, sequence = 0, timer, typing, taskId, previousRun, generation = 0;
     let active = false, changing = false;
@@ -115,11 +163,201 @@
     button('next').onclick = () => { offset += limit; loadReport(); };
     for (const name of ['library', 'code']) field(name).onchange = () => { offset = 0; loadReport(); };
     field('search').oninput = () => { clearTimeout(typing); typing = setTimeout(() => { offset = 0; loadReport(); }, 250); };
-    function show() { if (active) return; active = true; previousRun = undefined; refresh(++generation); }
+    function show() { if (active || page.querySelector('[data-panel=files]').hidden) return; active = true; previousRun = undefined; refresh(++generation); }
     function hide() { active = false; ++sequence; ++generation; clearTimeout(timer); clearTimeout(typing); }
     page.addEventListener('viewshow', show); page.addEventListener('viewhide', hide);
     page.addEventListener('pageshow', show); page.addEventListener('pagehide', hide);
+    page.addEventListener('shelfcheckpane', () => { if (page.querySelector('[data-panel=files]').hidden) hide(); else show(); });
     show();
+  })();
+  (function () {
+    const pages = document.querySelectorAll('#shelfCheckPage');
+    const page = pages[pages.length - 1];
+    if (page.dataset.datesReady) return;
+    page.dataset.datesReady = '1';
+    const ui = name => page.querySelector('[data-date="' + name + '"]');
+    const panel = page.querySelector('[data-panel=dates]');
+    const url = (path = '', params) => ApiClient.getUrl('ShelfCheck/Dates' + path, params);
+    const modes = { Preview: 'Vorschau', Apply: 'Datumsabgleich', Undo: 'Wiederherstellung' };
+    const states = { Running: 'Läuft', Paused: 'Pausiert', Stopped: 'Beendet', Completed: 'Abgeschlossen' };
+    const outcomes = { Proposed: 'Würde ändern', Changed: 'Geändert', Unchanged: 'Bereits passend', Missing: 'Datum fehlt',
+      Skipped: 'Übersprungen', Conflict: 'Zwischenzeitlich geändert', Failed: 'Fehlgeschlagen',
+      Restored: 'Wiederhergestellt', Writing: 'Speicherung begonnen', Pending: 'Offen' };
+    const kinds = { Movie: 'Film', Series: 'Serie', Episode: 'Episode' };
+    let visible = false, polling, view = 0, request = 0, offset = 0, busy = false, data, report, librariesKey, historyKey;
+    const date = ticks => new Date(ticks / 10000 - 62135596800000);
+    const day = ticks => ticks ? date(ticks).toLocaleDateString('de-DE', { timeZone: 'UTC' }) : '–';
+    const stamp = ticks => date(ticks).toLocaleString('de-DE');
+    const selected = () => [...ui('libraries').querySelectorAll('input:checked')].map(input => input.value).sort();
+    function textCell(value) {
+      const td = document.createElement('td');
+      td.textContent = value;
+      return td;
+    }
+    function renderControls() {
+      if (!data) return;
+      const active = data.Active, paused = data.Paused;
+      const dirty = selected().join() !== [...data.Selection].sort().join();
+      ui('libraries').disabled = !!(active || paused || busy);
+      ui('save').disabled = !dirty || !!(active || paused || busy);
+      ui('preview').disabled = dirty || !data.Selection.length || !!(active || paused || busy);
+      ui('apply').disabled = dirty || !data.CanApply || !!(active || paused || busy);
+      ui('apply').textContent = data.Incremental ? 'Neue und geänderte Einträge abgleichen' : 'Datumsabgleich starten';
+      ui('pause').hidden = !active;
+      ui('resume').hidden = ui('end').hidden = !paused;
+      for (const action of ['resume', 'end', 'pause', 'undo']) ui(action).disabled = busy;
+      ui('undo').hidden = !(report?.Run.Mode === 'Apply' && !active && !paused &&
+        ((report.Counts.Changed || 0) + (report.Counts.Writing || 0) + (report.Counts.Failed || 0) > 0));
+      ui('status').textContent = active ?
+        (active.Phase === 'Waiting' ? 'Wartet auf den Jellyfin-Bibliotheksscan. ' :
+          active.Phase === 'Preparing' ? 'Einträge werden ermittelt. ' : 'Lauf aktiv. ') +
+          (active.Total ? active.Done.toLocaleString('de-DE') + ' von ' + active.Total.toLocaleString('de-DE') + ' bearbeitet.' : '') :
+        paused ? 'Pausiert. ' + (paused.Message || '') :
+        !data.Selection.length ? 'Wähle die Bibliotheken aus und speichere deine Auswahl.' :
+        !data.CanApply ? 'Erstelle zuerst eine Vorschau für diese Auswahl.' : 'Bereit.';
+    }
+    function renderStatus(next) {
+      data = next;
+      const key = JSON.stringify([data.Libraries, data.Selection]);
+      if (key !== librariesKey) {
+        librariesKey = key;
+        ui('libraries').querySelectorAll('label').forEach(label => label.remove());
+        for (const library of data.Libraries) {
+          const label = document.createElement('label'), checkbox = document.createElement('input');
+          label.style.cssText = 'display:inline-flex;align-items:center;gap:.4em;margin:.4em 1em .4em 0';
+          checkbox.type = 'checkbox'; checkbox.value = library.Id;
+          checkbox.checked = data.Selection.includes(library.Id);
+          checkbox.onchange = renderControls;
+          label.append(checkbox, document.createTextNode(library.Name));
+          ui('libraries').append(label);
+        }
+      }
+      const keyHistory = JSON.stringify(data.History);
+      if (keyHistory !== historyKey) {
+        historyKey = keyHistory;
+        const select = ui('history'), previous = select.value;
+        select.replaceChildren(...data.History.map(run =>
+          new Option(modes[run.Mode] + ' · ' + stamp(run.Started) + ' · ' + states[run.State], run.Id)));
+        if (!data.History.length) select.add(new Option('Noch keine Läufe', ''));
+        if ([...select.options].some(option => option.value === previous) && !busy) select.value = previous;
+        loadRun();
+      }
+      renderControls();
+    }
+    async function refresh(generation) {
+      clearTimeout(polling);
+      try {
+        const next = await ApiClient.getJSON(url());
+        if (visible && view === generation) renderStatus(next);
+      } catch (e) {
+        if (visible && view === generation) ui('error').textContent = 'Laufstatus konnte nicht geladen werden.';
+      } finally {
+        if (visible && view === generation) polling = setTimeout(() => refresh(generation), 3000);
+      }
+    }
+    function summary(result) {
+      const entries = Object.entries(outcomes).filter(([key]) => result.Counts[key]);
+      return entries.length ? entries.map(([key, name]) => name + ' ' + result.Counts[key].toLocaleString('de-DE')).join(' · ') : 'Keine Einträge.';
+    }
+    async function loadRun() {
+      const now = ++request, id = ui('history').value;
+      if (!visible || !id) { ui('report').hidden = true; return; }
+      try {
+        const result = await ApiClient.getJSON(url('/Runs/' + id, { outcome: ui('outcome').value, offset }));
+        if (!visible || now !== request) return;
+        report = result;
+        offset = result.Offset;
+        ui('report').hidden = false;
+        ui('copyfallback').hidden = true;
+        ui('counts').textContent = summary(result);
+        ui('note').textContent = result.Run.Message || '';
+        ui('rows').replaceChildren(...result.Items.map(item => {
+          const tr = document.createElement('tr'), title = textCell('');
+          if (item.Name) {
+            const link = document.createElement('a');
+            link.href = '#/details?id=' + encodeURIComponent(item.Id) + '&serverId=' + encodeURIComponent(ApiClient.serverId());
+            link.textContent = item.Name;
+            title.append(link, document.createTextNode(kinds[item.Kind] ? ' · ' + kinds[item.Kind] : ''));
+          } else title.textContent = 'Jellyfin-Eintrag';
+          const outcome = textCell(outcomes[item.Status]);
+          if (item.Detail) {
+            const detail = document.createElement('small'); detail.style.display = 'block'; detail.textContent = item.Detail;
+            outcome.append(detail);
+          }
+          tr.append(title, textCell(day(item.Before)), textCell(day(item.After)), outcome);
+          return tr;
+        }));
+        ui('range').textContent = result.Total ? (offset + 1) + '–' + (offset + result.Items.length) + ' von ' + result.Total : 'Keine passenden Einträge.';
+        ui('back').disabled = offset === 0; ui('next').disabled = offset + 50 >= result.Total;
+        renderControls();
+      } catch (e) {
+        if (visible && now === request) ui('error').textContent = 'Laufbericht konnte nicht geladen werden.';
+      }
+    }
+    async function action(path, options = {}) {
+      if (busy) return;
+      busy = true;
+      ui('error').textContent = '';
+      renderControls();
+      try {
+        await ApiClient.fetch({ url: url(path), type: options.type || 'POST',
+          data: options.payload, contentType: options.payload ? 'application/json' : undefined });
+        if (visible) await refresh(++view);
+      } catch (e) {
+        let message;
+        try { message = (await e.json()).Message; } catch { /* The request may have failed before reaching Jellyfin. */ }
+        ui('error').textContent = message || 'Aktion fehlgeschlagen. Bitte erneut versuchen.';
+      } finally {
+        busy = false;
+        renderControls();
+      }
+    }
+    for (const name of ['preview', 'apply', 'pause', 'resume', 'end']) {
+      ui(name).onclick = () => {
+        if (name === 'apply' && !data?.Incremental && !window.confirm('Veröffentlichungsdatum für die freigegebenen Bibliotheken übernehmen?')) return;
+        if (name === 'end' && !window.confirm('Lauf beenden? Bereits übernommene Änderungen bleiben im Verlauf.')) return;
+        action('/' + name);
+      };
+    }
+    ui('save').onclick = () => action('/Libraries', { type: 'PUT', payload: JSON.stringify(selected()) });
+    ui('undo').onclick = () => {
+      if (report && window.confirm('Datumsänderungen dieses Laufs in den aktuell freigegebenen Bibliotheken rückgängig machen?'))
+        action('/Undo/' + report.Run.Id);
+    };
+    for (const name of ['history', 'outcome']) ui(name).onchange = () => { offset = 0; loadRun(); };
+    ui('back').onclick = () => { offset -= 50; loadRun(); };
+    ui('next').onclick = () => { offset += 50; loadRun(); };
+    ui('copy').onclick = async () => {
+      if (!report) return;
+      const run = report.Run;
+      const message = ['ShelfCheck · ' + modes[run.Mode] + ' #' + run.Id + ' · ' + states[run.State],
+        'Beginn: ' + stamp(run.Started), summary(report), run.Message || '',
+        ...(report.Items.length ? ['', 'Angezeigte Einträge:'] : []),
+        ...report.Items.map(item => (item.Name || 'Eintrag') + ' · ' + day(item.Before) + ' → ' + day(item.After) +
+          ' · ' + outcomes[item.Status] + (item.Detail ? ' · ' + item.Detail : ''))].join('\n');
+      try {
+        await navigator.clipboard.writeText(message);
+        ui('note').textContent = 'Bericht kopiert.';
+      } catch {
+        ui('copyfallback').hidden = false;
+        ui('text').value = message; ui('text').focus(); ui('text').select();
+      }
+    };
+    function show() { if (visible || panel.hidden) return; visible = true; historyKey = undefined; refresh(++view); }
+    function hide() { visible = false; ++view; ++request; clearTimeout(polling); }
+    for (const nav of page.querySelectorAll('[data-pane]')) {
+      nav.onclick = () => {
+        for (const section of page.querySelectorAll('[data-panel]')) section.hidden = section.dataset.panel !== nav.dataset.pane;
+        for (const button of page.querySelectorAll('[data-pane]')) {
+          button.setAttribute('aria-pressed', String(button === nav));
+          button.classList.toggle('button-submit', button === nav);
+        }
+        page.dispatchEvent(new Event('shelfcheckpane'));
+      };
+    }
+    page.addEventListener('shelfcheckpane', () => { if (panel.hidden) hide(); else show(); });
+    for (const event of ['viewshow', 'pageshow']) page.addEventListener(event, show);
+    for (const event of ['viewhide', 'pagehide']) page.addEventListener(event, hide);
   })();
   </script>
 </div>

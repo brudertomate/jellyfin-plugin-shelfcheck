@@ -3,12 +3,14 @@ using System.Text.RegularExpressions;
 
 namespace ShelfCheck;
 
-public sealed partial class Scanner(IEnumerable<string> videoExtensions)
+public sealed partial class Scanner(IEnumerable<string> videoExtensions, Func<string, string, bool>? isExtra = null,
+    IEnumerable<string>? extraFolders = null)
 {
     private static readonly StringComparer Names = StringComparer.OrdinalIgnoreCase;
     private static readonly HashSet<string> ImageExtensions = new([".jpg", ".jpeg", ".png", ".webp", ".tbn"], Names);
     private static readonly string[] PosterNames = ["poster", "folder", "cover", "default"];
     private readonly HashSet<string> _videoExtensions = new(videoExtensions, Names);
+    private readonly HashSet<string> _extraFolders = new(extraFolders ?? [], Names);
     private readonly Report _report = new();
     private CancellationToken _token;
     private LibraryRoot _root = null!;
@@ -20,6 +22,8 @@ public sealed partial class Scanner(IEnumerable<string> videoExtensions)
     {
         public List<DirectoryInfo> Children { get; } = [];
         public List<string> Videos { get; } = [];
+        public int Extras { get; set; }
+        public bool InExtras { get; init; }
         public HashSet<string> Images { get; } = new(Names);
         public bool Complete { get; set; } = true;
         public bool Ignored { get; set; }
@@ -83,11 +87,12 @@ public sealed partial class Scanner(IEnumerable<string> videoExtensions)
         var hasSeason = false;
         var complete = listing.Complete;
         var videos = listing.Videos.Count;
+        var extras = listing.Extras;
         foreach (var child in listing.Children)
         {
             var season = series ? SeasonName().Match(child.Name) : Match.Empty;
             hasSeason |= season.Success;
-            var childListing = Read(child);
+            var childListing = Read(child, _extraFolders.Contains(child.Name));
             if (childListing.Ignored)
             {
                 complete = false;
@@ -96,6 +101,7 @@ public sealed partial class Scanner(IEnumerable<string> videoExtensions)
 
             var result = ScanSubtree(childListing, 1);
             videos += result.Videos;
+            extras += result.Extras;
             complete &= result.Complete;
             if (season.Success)
             {
@@ -105,13 +111,11 @@ public sealed partial class Scanner(IEnumerable<string> videoExtensions)
                 if (childListing.Complete && listing.Complete && !HasCover(childListing, "season") &&
                     !listing.Images.Contains(prefix + "-poster") && !listing.Images.Contains(child.Name.Replace(" ", "") + "-poster"))
                     Add(child.FullName, "Staffel", "MissingCover", "Weder Staffelcover noch zugehöriges Poster im Serienordner gefunden.");
-                if (result is { Videos: 0, Complete: true })
-                    Add(child.FullName, "Staffel", "NoVideo", "Keine Videodatei im Staffelordner oder seinen Unterordnern.");
+                CheckVideos(child.FullName, "Staffel", result.Videos, result.Extras, result.Complete);
             }
         }
 
-        if (complete && videos == 0)
-            Add(directory.FullName, kind, "NoVideo", "Keine Videodatei im Titelordner oder seinen Unterordnern.");
+        CheckVideos(directory.FullName, kind, videos, extras, complete);
         if (listing.Complete && !HasCover(listing, series ? "show" : "movie"))
             Add(directory.FullName, kind, "MissingCover", "Lokales Titelposter fehlt.");
         if (series && !hasSeason && listing.Complete)
@@ -128,9 +132,19 @@ public sealed partial class Scanner(IEnumerable<string> videoExtensions)
         return listing.Images.Contains(stem) || PosterNames.Any(name => listing.Images.Contains(stem + "-" + name));
     }
 
-    private (int Videos, bool Complete) ScanSubtree(Listing listing, int depth)
+    private void CheckVideos(string path, string kind, int videos, int extras, bool complete)
+    {
+        if (!complete || videos > 0) return;
+        if (extras > 0)
+            Add(path, kind, "OnlyExtras", "Nur Trailer oder Extras gefunden. Der Hauptfilm bzw. die Folgen fehlen.");
+        else
+            Add(path, kind, "NoVideo", "Keine Videodatei im Ordner oder seinen Unterordnern.");
+    }
+
+    private (int Videos, int Extras, bool Complete) ScanSubtree(Listing listing, int depth)
     {
         var count = listing.Videos.Count;
+        var extras = listing.Extras;
         var complete = listing.Complete && !listing.Ignored;
         foreach (var child in listing.Children)
         {
@@ -141,18 +155,19 @@ public sealed partial class Scanner(IEnumerable<string> videoExtensions)
                 continue;
             }
 
-            var result = ScanSubtree(Read(child), depth + 1);
+            var result = ScanSubtree(Read(child, listing.InExtras || _extraFolders.Contains(child.Name)), depth + 1);
             count += result.Videos;
+            extras += result.Extras;
             complete &= result.Complete;
         }
 
-        return (count, complete);
+        return (count, extras, complete);
     }
 
-    private Listing Read(DirectoryInfo directory)
+    private Listing Read(DirectoryInfo directory, bool inExtras = false)
     {
         _token.ThrowIfCancellationRequested();
-        var listing = new Listing();
+        var listing = new Listing { InExtras = inExtras };
         try
         {
             if (directory.Attributes.HasFlag(FileAttributes.ReparsePoint) && directory.Exists)
@@ -182,7 +197,12 @@ public sealed partial class Scanner(IEnumerable<string> videoExtensions)
                         Add(entry.FullName, "Datei", "Unchecked", "Ziel der Dateiverknüpfung nicht erreichbar.");
                     }
                     else if (_videoExtensions.Contains(entry.Extension))
-                        listing.Videos.Add(entry.Name);
+                    {
+                        if (inExtras || isExtra?.Invoke(entry.FullName, _root.Path) == true)
+                            listing.Extras++;
+                        else
+                            listing.Videos.Add(entry.Name);
+                    }
                     else
                         listing.Images.Add(Path.GetFileNameWithoutExtension(entry.Name));
                 }
@@ -194,7 +214,7 @@ public sealed partial class Scanner(IEnumerable<string> videoExtensions)
             Add(directory.FullName, "Pfad", "Unchecked", ex.Message);
         }
 
-        _report.Videos += listing.Videos.Count;
+        _report.Videos += listing.Videos.Count + listing.Extras;
         return listing;
 
         void Skip(string detail)

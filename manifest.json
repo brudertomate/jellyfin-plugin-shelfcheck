@@ -2,8 +2,8 @@
   {
     "guid": "787553a2-52ba-476a-8393-8c5d2fe89ce5",
     "name": "ShelfCheck",
-    "description": "Liest Bibliothekspfade und meldet fehlende Videos, lokale Poster und Staffelordner im Admin-Dashboard.",
-    "overview": "Bestandsprüfung für Film- und Serienbibliotheken.",
+    "description": "Prüft lokale Videos, Poster, Staffelordner sowie Trailer und gleicht das Hinzufügedatum mit der Veröffentlichung ab.",
+    "overview": "Bestandsprüfung und Datumsabgleich für Film- und Serienbibliotheken.",
     "owner": "brudertomate",
     "category": "General",
     "versions": [
