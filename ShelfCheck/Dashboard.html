@@ -69,6 +69,7 @@
           <button is="emby-button" class="raised" data-action="delete-links">Defekte Verknüpfungen löschen …</button>
           <button is="emby-button" class="raised" data-action="delete-movie-folders">Filmordner ohne Video löschen …</button>
           <button is="emby-button" class="raised" data-action="delete-season-folders">Staffelordner ohne Video löschen …</button>
+          <button is="emby-button" class="raised" data-action="delete-series-folders">Serienordner ohne Video löschen …</button>
           <button is="emby-button" class="raised" data-action="images">Fehlende Bilder holen …</button>
         </div>
         <label style="display:block;margin-top:1em"><input type="checkbox" data-id="cleanup-movies" checked> Beim Löschen defekter Verknüpfungen anschließend videolose Filmordner samt Begleitdateien entfernen</label>
@@ -196,12 +197,21 @@
     let offset = 0, sequence = 0, timer, typing, taskId, previousRun, generation = 0;
     let active = false, changing = false, scanBusy = false, paused = false, selectionLoaded = false, savedSelection = '';
     const selectedPaths = new Set();
+    const actionNames = {DeleteLinks:'Defekte Verknüpfungen löschen',DeleteMovieFolders:'Filmordner ohne Video löschen',
+      DeleteSeasonFolders:'Staffelordner ohne Video löschen',DeleteSeriesFolders:'Serienordner ohne Video löschen',Images:'Fehlende Bilder holen'};
+    const actionDescriptions = {
+      DeleteLinks:'Die aufgelisteten Dateiverknüpfungen werden nach erneuter Prüfung endgültig entfernt. Zugeordnete Jellyfin-Einträge werden abgeglichen.',
+      DeleteMovieFolders:'Die aufgelisteten Filmordner werden nach vollständiger erneuter Prüfung samt Begleitdateien endgültig entfernt. Serien und Staffeln sind ausgeschlossen.',
+      DeleteSeasonFolders:'Die aufgelisteten Staffelordner werden nach vollständiger erneuter Prüfung samt Begleitdateien endgültig entfernt. Übergeordnete Serienordner bleiben erhalten.',
+      DeleteSeriesFolders:'Die aufgelisteten Serienordner werden einschließlich ihrer Staffel- und Unterordner sowie aller Begleitdateien endgültig entfernt. Vor jedem Löschen wird der gesamte Inhalt erneut auf Videos, Medienplatzhalter und Verknüpfungen geprüft.',
+      Images:'Jellyfin prüft fehlende Bilder mit den aktivierten Anbietern deiner Bibliotheken. Speicherort und Bildtypen richten sich nach deinen Einstellungen.'
+    };
     let visibleItems = [], actionPlan, bulkBusy = false;
     function updateSelection() {
       field('selected-count').textContent = field('all-matching').checked ? 'Alle passenden Treffer des Filters' : selectedPaths.size + ' ausgewählt';
-      for (const name of ['delete-links','delete-movie-folders','delete-season-folders','images']) button(name).disabled = bulkBusy || (!field('all-matching').checked && !selectedPaths.size);
+      for (const name of ['delete-links','delete-movie-folders','delete-season-folders','delete-series-folders','images']) button(name).disabled = bulkBusy || (!field('all-matching').checked && !selectedPaths.size);
     }
-    const eligible = item => item.Code === 'MissingCover' || (item.Code === 'NoVideo' && ['Film','Staffel'].includes(item.Kind)) ||
+    const eligible = item => item.Code === 'MissingCover' || (item.Code === 'NoVideo' && ['Film','Staffel','Serie'].includes(item.Kind)) ||
       (item.Code === 'Unchecked' && item.Kind === 'Datei' && item.Detail === 'Ziel der Dateiverknüpfung nicht erreichbar.');
     async function jsonRequest(path, payload) {
       const response = await ApiClient.fetch({url:ApiClient.getUrl('ShelfCheck/Actions'+path),type:'POST',
@@ -218,13 +228,9 @@
         actionPlan=await jsonRequest('/Preview',{Action:action,AllMatching:field('all-matching').checked,
           Paths:[...selectedPaths],Code:field('code').value,Library:field('library').value,Search:field('search').value,
           CleanMovieFolders:field('cleanup-movies').checked});
-        field('preview-title').textContent=action==='DeleteLinks'?'Defekte Verknüpfungen löschen':action==='DeleteMovieFolders'?'Filmordner ohne Video löschen':
-          action==='DeleteSeasonFolders'?'Staffelordner ohne Video löschen':'Fehlende Bilder holen';
+        field('preview-title').textContent=actionNames[action];
         field('preview-description').textContent=actionPlan.Paths.length.toLocaleString('de-DE')+' Einträge. '+
-          (action==='DeleteLinks'?'Die aufgelisteten Dateiverknüpfungen werden nach erneuter Prüfung endgültig entfernt. Zugeordnete Jellyfin-Einträge werden abgeglichen.' :
-            action==='DeleteMovieFolders'?'Die aufgelisteten Filmordner werden nach vollständiger erneuter Prüfung samt Begleitdateien endgültig entfernt. Serien und Staffeln sind ausgeschlossen.':
-            action==='DeleteSeasonFolders'?'Die aufgelisteten Staffelordner werden nach vollständiger erneuter Prüfung samt Begleitdateien endgültig entfernt. Übergeordnete Serienordner bleiben erhalten.':
-            'Jellyfin prüft fehlende Bilder mit den aktivierten Anbietern deiner Bibliotheken. Speicherort und Bildtypen richten sich nach deinen Einstellungen.') +
+          actionDescriptions[action] +
           (actionPlan.CleanMovieFolders?' Anschließend werden die unten aufgeführten Filmordner erneut geprüft und bei fehlenden Videos samt Begleitdateien entfernt.':'');
         field('preview-paths').value=actionPlan.Paths.join('\n');
         if(actionPlan.MovieFolders?.length)field('preview-paths').value+='\n\nFilmordner zur anschließenden Prüfung\n'+actionPlan.MovieFolders.join('\n');
@@ -240,8 +246,7 @@
       if(!job)return;
       bulkBusy=job.State==='Running'||job.State==='Waiting';
       const states={Running:'Läuft',Waiting:'Wartet auf den Bibliotheksscan',Completed:'Abgeschlossen',Cancelled:'Abgebrochen',Interrupted:'Unterbrochen',Failed:'Fehlgeschlagen'};
-      field('action-status').textContent=(job.Action==='DeleteLinks'?'Verknüpfungen löschen':job.Action==='DeleteMovieFolders'?'Filmordner löschen':
-        job.Action==='DeleteSeasonFolders'?'Staffelordner löschen':'Bilder holen')+' · '+states[job.State]+
+      field('action-status').textContent=actionNames[job.Action]+' · '+states[job.State]+
         ' · '+job.Done+' / '+job.Total+' · Erfolgreich '+job.Succeeded+' · Übersprungen '+job.Skipped+' · Fehler '+job.Failed;
       field('action-path').textContent=job.CurrentPath||'';
       const labels={Succeeded:'Erfolgreich',Skipped:'Übersprungen',Failed:'Fehler'};
@@ -381,6 +386,7 @@
     button('delete-links').onclick=()=>prepareAction('DeleteLinks');
     button('delete-movie-folders').onclick=()=>prepareAction('DeleteMovieFolders');
     button('delete-season-folders').onclick=()=>prepareAction('DeleteSeasonFolders');
+    button('delete-series-folders').onclick=()=>prepareAction('DeleteSeriesFolders');
     button('images').onclick=()=>prepareAction('Images');
     button('close-preview').onclick=()=>field('action-preview').close();
     button('confirm-action').onclick=async()=>{

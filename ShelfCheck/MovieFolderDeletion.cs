@@ -1,21 +1,28 @@
 namespace ShelfCheck;
 
+public enum FolderCleanupKind { Movie, Season, Series }
+
 public static class MovieFolderDeletion
 {
     public static bool DeleteIfNoVideo(string path, IEnumerable<string> videoExtensions, CancellationToken token, out string detail,
-        bool isSeason = false)
+        FolderCleanupKind kind = FolderCleanupKind.Movie)
     {
         var root = new DirectoryInfo(path);
-        var kind = isSeason ? "Staffelordner" : "Filmordner";
+        var label = kind switch
+        {
+            FolderCleanupKind.Season => "Staffelordner",
+            FolderCleanupKind.Series => "Serienordner",
+            _ => "Filmordner"
+        };
         if (root.Parent is null) throw new InvalidOperationException("Ein Dateisystem-Stammordner kann nicht entfernt werden.");
-        if (isSeason && !Scanner.IsSeasonDirectory(root.Name))
+        if (kind == FolderCleanupKind.Season && !Scanner.IsSeasonDirectory(root.Name))
         {
             detail = "Der Ordnername entspricht keinem erkannten Staffelordner.";
             return false;
         }
         if (!root.Exists)
         {
-            detail = kind + " wurde bereits entfernt.";
+            detail = label + " wurde bereits entfernt.";
             return false;
         }
         var extensions = new HashSet<string>(videoExtensions.Concat([".disc"]), StringComparer.OrdinalIgnoreCase);
@@ -28,7 +35,8 @@ public static class MovieFolderDeletion
             token.ThrowIfCancellationRequested();
             EnsureNoDirectoryLinks(root.FullName, next.Directory.FullName);
             if (next.Depth > 96) throw new InvalidOperationException("Ordnerstruktur ist zu tief für eine vollständige Prüfung.");
-            if (Scanner.IsSeasonDirectory(next.Directory.Name) && !(isSeason && next.Depth == 0))
+            if (kind != FolderCleanupKind.Series && Scanner.IsSeasonDirectory(next.Directory.Name) &&
+                !(kind == FolderCleanupKind.Season && next.Depth == 0))
             {
                 detail = "Staffelstruktur erkannt. Ordner bleibt erhalten.";
                 return false;
@@ -44,8 +52,8 @@ public static class MovieFolderDeletion
                     return false;
                 }
                 if (entry.Name.Equals(".ignore", StringComparison.OrdinalIgnoreCase) ||
-                    entry.Name.Equals("tvshow.nfo", StringComparison.OrdinalIgnoreCase) ||
-                    (!isSeason && entry.Name.Equals("season.nfo", StringComparison.OrdinalIgnoreCase)))
+                    (kind != FolderCleanupKind.Series && entry.Name.Equals("tvshow.nfo", StringComparison.OrdinalIgnoreCase)) ||
+                    (kind == FolderCleanupKind.Movie && entry.Name.Equals("season.nfo", StringComparison.OrdinalIgnoreCase)))
                 {
                     detail = "Serien-/Staffelmetadaten oder .ignore erkannt. Ordner bleibt erhalten.";
                     return false;
@@ -74,7 +82,7 @@ public static class MovieFolderDeletion
             EnsureNoDirectoryLinks(root.FullName, directories[i].FullName);
             Directory.Delete(directories[i].FullName, recursive: false);
         }
-        detail = kind + " ohne Video einschließlich seiner Begleitdateien entfernt.";
+        detail = label + " ohne Video einschließlich seiner Begleitdateien entfernt.";
         return true;
     }
 

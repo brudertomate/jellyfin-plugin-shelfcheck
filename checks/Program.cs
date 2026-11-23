@@ -79,10 +79,10 @@ try
     File.WriteAllText(Path.Join(seriesFolder, "tvshow.nfo"), "retain series");
     File.WriteAllText(Path.Join(emptySeason, "season.nfo"), "season metadata");
     File.WriteAllText(Path.Join(emptySeason, "metadata", "poster.jpg"), "image");
-    if (!MovieFolderDeletion.DeleteIfNoVideo(emptySeason, [".mkv"], CancellationToken.None, out _, isSeason: true) ||
+    if (!MovieFolderDeletion.DeleteIfNoVideo(emptySeason, [".mkv"], CancellationToken.None, out _, kind: FolderCleanupKind.Season) ||
         !File.Exists(Path.Join(seriesFolder, "tvshow.nfo")) || !Directory.Exists(seriesFolder))
         throw new InvalidOperationException("Season cleanup damaged the series folder.");
-    if (MovieFolderDeletion.DeleteIfNoVideo(seriesFolder, [".mkv"], CancellationToken.None, out _, isSeason: true))
+    if (MovieFolderDeletion.DeleteIfNoVideo(seriesFolder, [".mkv"], CancellationToken.None, out _, kind: FolderCleanupKind.Season))
         throw new InvalidOperationException("Series folder was accepted as a season.");
     var protectedSeasonNumber = 3;
     foreach (var fileName in new[] { "episode.mkv", "tvshow.nfo", ".ignore" })
@@ -90,15 +90,36 @@ try
         var protectedSeason = Path.Join(seriesFolder, "Season " + protectedSeasonNumber++);
         Directory.CreateDirectory(protectedSeason);
         File.WriteAllText(Path.Join(protectedSeason, fileName), "retain");
-        if (MovieFolderDeletion.DeleteIfNoVideo(protectedSeason, [".mkv"], CancellationToken.None, out _, isSeason: true) ||
+        if (MovieFolderDeletion.DeleteIfNoVideo(protectedSeason, [".mkv"], CancellationToken.None, out _, kind: FolderCleanupKind.Season) ||
             !File.Exists(Path.Join(protectedSeason, fileName)))
             throw new InvalidOperationException("Protected season content was deleted.");
     }
     var specials = Path.Join(seriesFolder, "Specials");
     Directory.CreateDirectory(specials);
-    if (!MovieFolderDeletion.DeleteIfNoVideo(specials, [".mkv"], CancellationToken.None, out _, isSeason: true))
+    if (!MovieFolderDeletion.DeleteIfNoVideo(specials, [".mkv"], CancellationToken.None, out _, kind: FolderCleanupKind.Season))
         throw new InvalidOperationException("Empty specials folder was not cleaned.");
     Console.WriteLine("Season folder deletion checks passed.");
+    var emptySeries = Path.Join(cleanup, "Empty Series");
+    Directory.CreateDirectory(Path.Join(emptySeries, "Season 01", "metadata"));
+    Directory.CreateDirectory(Path.Join(emptySeries, "Specials"));
+    File.WriteAllText(Path.Join(emptySeries, "tvshow.nfo"), "series metadata");
+    File.WriteAllText(Path.Join(emptySeries, "Season 01", "season.nfo"), "season metadata");
+    File.WriteAllText(Path.Join(emptySeries, "Season 01", "metadata", "poster.jpg"), "image");
+    if (!MovieFolderDeletion.DeleteIfNoVideo(emptySeries, [".mkv", ".strm"], CancellationToken.None, out _, kind: FolderCleanupKind.Series) ||
+        Directory.Exists(emptySeries) || !Directory.Exists(cleanup))
+        throw new InvalidOperationException("Empty series cleanup failed.");
+    foreach (var protectedFile in new[] { "Season 01/episode.mkv", "Specials/deep/episode.strm", "Season 02/.ignore" })
+    {
+        var protectedSeries = Path.Join(cleanup, Guid.NewGuid().ToString("N"));
+        var protectedPath = Path.Join(protectedSeries, protectedFile);
+        Directory.CreateDirectory(Path.GetDirectoryName(protectedPath)!);
+        File.WriteAllText(protectedPath, "retain");
+        File.WriteAllText(Path.Join(protectedSeries, "tvshow.nfo"), "retain");
+        if (MovieFolderDeletion.DeleteIfNoVideo(protectedSeries, [".mkv", ".strm"], CancellationToken.None, out _, kind: FolderCleanupKind.Series) ||
+            !File.Exists(protectedPath) || !File.Exists(Path.Join(protectedSeries, "tvshow.nfo")))
+            throw new InvalidOperationException("Series with protected contents was deleted.");
+    }
+    Console.WriteLine("Series folder deletion checks passed.");
     if (!OperatingSystem.IsWindows())
     {
         var target = Path.Join(root.FullName, "link-target.mkv");
@@ -125,6 +146,8 @@ try
         File.CreateSymbolicLink(lastLink, Path.Join(root.FullName, "absent.mkv"));
         if (MovieFolderDeletion.DeleteIfNoVideo(linkedMovie, [".mkv"], CancellationToken.None, out _))
             throw new InvalidOperationException("Folder with a link was deleted.");
+        if (MovieFolderDeletion.DeleteIfNoVideo(linkedMovie, [".mkv"], CancellationToken.None, out _, kind: FolderCleanupKind.Series))
+            throw new InvalidOperationException("Series with a broken link was deleted.");
         if (!BrokenLinkFile.DeleteIfBroken(lastLink, out _) ||
             !MovieFolderDeletion.DeleteIfNoVideo(linkedMovie, [".mkv"], CancellationToken.None, out _))
             throw new InvalidOperationException("Cleanup after last broken link failed.");
