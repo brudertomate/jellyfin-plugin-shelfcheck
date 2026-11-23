@@ -21,5 +21,6 @@ public sealed class Plugin(IApplicationPaths paths, IXmlSerializer serializer)
 public sealed class Services : IPluginServiceRegistrator
 {
     public void RegisterServices(IServiceCollection services, IServerApplicationHost host) =>
-        services.AddSingleton<ReportStore>().AddSingleton<ScanControl>().AddSingleton<DateRunStore>().AddSingleton<DateSync>();
+        services.AddSingleton<ReportStore>().AddSingleton<ScanControl>().AddSingleton<DateRunStore>().AddSingleton<DateSync>()
+            .AddSingleton<FindingActions>();
 }

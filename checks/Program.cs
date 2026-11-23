@@ -53,6 +53,27 @@ try
         excludedReport.Videos != 2)
         throw new InvalidOperationException("Excluded library was scanned.");
     Console.WriteLine("Scanner checks passed.");
+    if (!OperatingSystem.IsWindows())
+    {
+        var target = Path.Join(root.FullName, "link-target.mkv");
+        var broken = Path.Join(root.FullName, "broken.mkv");
+        var healthy = Path.Join(root.FullName, "healthy.mkv");
+        var restored = Path.Join(root.FullName, "restored.mkv");
+        File.WriteAllText(target, "retain");
+        File.CreateSymbolicLink(broken, Path.Join(root.FullName, "missing-target.mkv"));
+        File.CreateSymbolicLink(healthy, target);
+        File.CreateSymbolicLink(restored, Path.Join(root.FullName, "returned-target.mkv"));
+        File.WriteAllText(Path.Join(root.FullName, "returned-target.mkv"), "returned");
+        if (!BrokenLinkFile.DeleteIfBroken(broken, out _) || new FileInfo(broken).LinkTarget is not null ||
+            BrokenLinkFile.DeleteIfBroken(healthy, out _) || BrokenLinkFile.DeleteIfBroken(target, out _) ||
+            BrokenLinkFile.DeleteIfBroken(restored, out _) || File.ReadAllText(target) != "retain")
+            throw new InvalidOperationException("Broken-link deletion guards failed.");
+        var directoryLink = Path.Join(root.FullName, "linked-folder");
+        Directory.CreateSymbolicLink(directoryLink, Path.Join(root.FullName, "Movies"));
+        if (BrokenLinkFile.DeleteIfBroken(directoryLink, out _))
+            throw new InvalidOperationException("Directory link was deleted.");
+        Console.WriteLine("Broken-link deletion checks passed.");
+    }
 }
 finally
 {

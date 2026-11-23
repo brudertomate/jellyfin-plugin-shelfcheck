@@ -48,6 +48,17 @@ Unter **Dateibestand → Bibliotheken für diesen Scan** kannst du Bibliotheken 
 
 Der Datumsabgleich zeigt zusätzlich den aktuellen Titel und die letzte Aktivität. Einzelne gespeicherte Datumsänderungen erscheinen laufend im Bericht. **Abbrechen** beendet einen aktiven Abgleich mit erhaltenem Änderungsprotokoll. **Pause** speichert den Fortschritt zum späteren Fortsetzen.
 
+## Bulk-Aktionen für Befunde
+
+Über die Kontrollkästchen im Bericht kannst du einzelne Treffer oder die sichtbare Seite auswählen. **Alle passenden Treffer des aktuellen Filters** bezieht weitere Ergebnisseiten ein. Die Vorschau zeigt vor dem Start alle betroffenen Pfade.
+
+- **Defekte Verknüpfungen löschen** bearbeitet ausschließlich Befunde „Ziel der Dateiverknüpfung nicht erreichbar“. Vor jedem Löschen prüft ShelfCheck erneut den Bibliothekspfad, die Dateiverknüpfung und ihr Ziel. Erreichbare Ziele, normale Dateien und Verzeichnisverknüpfungen werden übersprungen. Die Dateiverknüpfung wird endgültig entfernt. Ein zugeordneter Jellyfin-Videoeintrag wird über dessen Bibliotheksverwaltung abgeglichen. Scheitert dieser zweite Schritt, nennt der Bericht den erforderlichen Bibliotheksscan.
+- **Fehlende Bilder holen** bearbeitet Treffer „Poster fehlt“. ShelfCheck ruft für den zugehörigen Jellyfin-Titel die Bildaktualisierung mit den aktivierten Anbietern, deren Reihenfolge und den Bildlimits der Bibliothek auf. Bereits vorhandene Bilder werden beibehalten. Bei fehlenden Kennungen oder fehlenden Anbieterbildern erscheint ein Hinweis im Ergebnis. Ein erfolgreicher Abruf kann die Bilder im Jellyfin-Metadatenverzeichnis speichern. Ob sie direkt im Medienordner landen, bestimmt die Bibliothekskonfiguration. Deshalb kann der Dateiscan weiterhin ein fehlendes lokales Poster melden, obwohl Jellyfin bereits ein Poster anzeigt.
+
+Bulk-Aktionen arbeiten nacheinander und warten auf einen laufenden Jellyfin-Bibliotheksscan. **Bulk-Aktion abbrechen** beendet weitere Arbeit. Fertige Aktionen bleiben erhalten. Fortschritt und die letzten 50 Einzelergebnisse erscheinen im Dashboard. Das vollständige Einzelergebnisprotokoll liegt unter `shelfcheck/actions/<Lauf-ID>.jsonl`. Nach einem Serverneustart wird ein offener Lauf als unterbrochen angezeigt.
+
+Die Bibliotheksauswahl ist nach Jellyfin-Typ gruppiert. Jede Gruppe bietet **Alle auswählen** und **Alle abwählen**. Der Dateiscan unterstützt zusätzlich Musikvideo- und Heimvideobibliotheken. Musik, Bücher und Sammlungen werden mit ihrem Typ angezeigt und sind für den Video-Dateiscan deaktiviert. Der Datumsabgleich umfasst Filme, Serien und gemischte Bibliotheken.
+
 ### Welche Ablage wird erkannt?
 
 - Jeder unmittelbare Unterordner eines Bibliothekspfads gilt als Titel. Zusätzliche Gruppierungsebenen wie `Filme/A–Z/A/Filmtitel` benötigen passend konfigurierte Bibliothekspfade. Lose Filme im Bibliotheksstamm werden einzeln geprüft.

@@ -18,6 +18,10 @@
     #shelfCheckPage table small { opacity:.7;max-width:30em; }
     #shelfCheckPage [role=alert] { color:#ffb4ab; }
     #shelfCheckPage progress { width:100%;height:6px;accent-color:#00a4dc; }
+    #shelfCheckPage [data-library-group] { margin:.8em 0; }
+    #shelfCheckPage .sc-library-grid { display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:.7em;padding:.7em 0; }
+    #shelfCheckPage dialog { color:inherit;background:#202020;border:1px solid #ffffff40;border-radius:12px;max-width:800px;width:85%;padding:1.5em; }
+    #shelfCheckPage dialog::backdrop { background:#000a; }
     @media(max-width:600px) { #shelfCheckPage .content-primary {padding:1em;} #shelfCheckPage .sc-card {padding:.8em;} }
   </style>
   <div data-role="content"><div class="content-primary">
@@ -55,6 +59,32 @@
     <h2 data-id="report-title">Ergebnisse</h2>
     <p data-id="summary">Bericht wird geladen …</p>
     <section data-id="report" hidden>
+      <div class="sc-card">
+        <h3>Auswahl bearbeiten</h3>
+        <button is="emby-button" class="raised" data-action="select-page">Sichtbare Treffer auswählen</button>
+        <button is="emby-button" class="raised" data-action="clear-selection">Auswahl aufheben</button>
+        <label style="display:block;margin:1em 0"><input type="checkbox" data-id="all-matching"> Alle passenden Treffer des aktuellen Filters, auch auf weiteren Seiten</label>
+        <span data-id="selected-count">0 ausgewählt</span>
+        <div style="display:flex;flex-wrap:wrap;gap:.5em;margin-top:1em">
+          <button is="emby-button" class="raised" data-action="delete-links">Defekte Verknüpfungen löschen …</button>
+          <button is="emby-button" class="raised" data-action="images">Fehlende Bilder holen …</button>
+        </div>
+      </div>
+      <div class="sc-card" data-id="action-report" hidden>
+        <h3>Bulk-Aktion</h3>
+        <p data-id="action-status" role="status"></p>
+        <p data-id="action-path" class="sc-path"></p>
+        <button is="emby-button" class="raised" data-action="cancel-action" hidden>Bulk-Aktion abbrechen</button>
+        <details><summary>Ergebnisse der letzten 50 Einträge</summary><pre data-id="action-log" style="white-space:pre-wrap;overflow-wrap:anywhere"></pre></details>
+      </div>
+      <dialog data-id="action-preview">
+        <h2 data-id="preview-title"></h2>
+        <p data-id="preview-description"></p>
+        <textarea data-id="preview-paths" rows="10" readonly style="width:100%"></textarea>
+        <p role="alert" data-id="preview-error"></p>
+        <button is="emby-button" class="raised" data-action="close-preview">Zurück</button>
+        <button is="emby-button" class="raised button-submit" data-action="confirm-action">Ausgewählte Aktion starten</button>
+      </dialog>
       <details><summary>Geprüfte Bibliothekspfade</summary><ul data-id="roots"></ul></details>
       <div style="display:flex;flex-wrap:wrap;gap:1em;margin:1.5em 0;align-items:end">
         <label>Bibliothek<select is="emby-select" data-id="library"><option value="">Alle Bibliotheken</option></select></label>
@@ -67,7 +97,7 @@
         <label>Pfad durchsuchen<input is="emby-input" type="search" data-id="search"></label>
       </div>
       <div style="overflow-x:auto"><table style="width:100%;text-align:left;border-spacing:0 .7em">
-        <thead><tr><th>Befund</th><th>Bibliothek</th><th>Typ</th><th>Pfad</th></tr></thead><tbody data-id="rows"></tbody>
+        <thead><tr><th>Auswahl</th><th>Befund</th><th>Bibliothek</th><th>Typ</th><th>Pfad</th></tr></thead><tbody data-id="rows"></tbody>
       </table></div>
       <p data-id="range" aria-live="polite"></p>
       <button is="emby-button" class="raised" data-action="back">Zurück</button>
@@ -119,6 +149,39 @@
   </div></div>
   <script>
   (function () {
+    const pages = document.querySelectorAll('#shelfCheckPage'), page = pages[pages.length - 1];
+    page.renderLibraryGroups = function(container, libraries, included, onChange) {
+      container.querySelectorAll('[data-library-group]').forEach(group => group.remove());
+      const types = {movies:'Filme',tvshows:'Serien',musicvideos:'Musikvideos',homevideos:'Heimvideos und Fotos',
+        mixed:'Gemischte Bibliotheken',music:'Musik',books:'Bücher',boxsets:'Sammlungen'};
+      const groups = new Map();
+      for (const library of libraries) {
+        const type = library.Type || 'mixed';
+        if (!groups.has(type)) groups.set(type, []);
+        groups.get(type).push(library);
+      }
+      for (const [type, items] of [...groups].sort((a,b) => (types[a[0]] || 'Sonstige').localeCompare(types[b[0]] || 'Sonstige','de'))) {
+        const group = document.createElement('fieldset'), legend = document.createElement('legend'), grid = document.createElement('div');
+        group.dataset.libraryGroup = type; legend.textContent = types[type] || 'Sonstige';
+        group.append(legend);
+        for (const [name, checked] of [['Alle auswählen',true],['Alle abwählen',false]]) {
+          const button = document.createElement('button');button.type='button';button.className='raised emby-button';button.textContent=name;
+          button.disabled = items.every(item => item.Supported === false);
+          button.onclick=()=> {group.querySelectorAll('input:not(:disabled)').forEach(input=>input.checked=checked);onChange();};
+          group.append(button);
+        }
+        grid.className='sc-library-grid';
+        for (const library of items.sort((a,b)=>a.Name.localeCompare(b.Name,'de'))) {
+          const label=document.createElement('label'), input=document.createElement('input');
+          input.type='checkbox';input.value=library.Id;input.disabled=library.Supported===false;
+          input.checked=!input.disabled && included(library);input.onchange=onChange;
+          label.append(input,document.createTextNode(' '+library.Name+(input.disabled?' (Dateiscan nicht unterstützt)':'')));grid.append(label);
+        }
+        group.append(grid);container.append(group);
+      }
+    };
+  })();
+  (function () {
     const pages = document.querySelectorAll('#shelfCheckPage');
     const page = pages[pages.length - 1];
     if (page.dataset.ready) return;
@@ -129,6 +192,52 @@
     const limit = 50;
     let offset = 0, sequence = 0, timer, typing, taskId, previousRun, generation = 0;
     let active = false, changing = false, scanBusy = false, paused = false, selectionLoaded = false, savedSelection = '';
+    const selectedPaths = new Set();
+    let visibleItems = [], actionPlan, bulkBusy = false;
+    function updateSelection() {
+      field('selected-count').textContent = field('all-matching').checked ? 'Alle passenden Treffer des Filters' : selectedPaths.size + ' ausgewählt';
+      for (const name of ['delete-links','images']) button(name).disabled = bulkBusy || (!field('all-matching').checked && !selectedPaths.size);
+    }
+    const eligible = item => item.Code === 'MissingCover' || (item.Code === 'Unchecked' && item.Kind === 'Datei' && item.Detail === 'Ziel der Dateiverknüpfung nicht erreichbar.');
+    async function jsonRequest(path, payload) {
+      const response = await ApiClient.fetch({url:ApiClient.getUrl('ShelfCheck/Actions'+path),type:'POST',
+        contentType:'application/json',data:payload ? JSON.stringify(payload) : undefined});
+      return response.status === 204 ? null : response.json();
+    }
+    async function bulkError(e) {
+      let message;
+      try {message=(await e.json()).Message;}catch {}
+      field('error').textContent=message || e.message || 'Bulk-Aktion konnte nicht gestartet werden.';
+    }
+    async function prepareAction(action) {
+      try {
+        actionPlan=await jsonRequest('/Preview',{Action:action,AllMatching:field('all-matching').checked,
+          Paths:[...selectedPaths],Code:field('code').value,Library:field('library').value,Search:field('search').value});
+        field('preview-title').textContent=action==='DeleteLinks'?'Defekte Verknüpfungen löschen':'Fehlende Bilder holen';
+        field('preview-description').textContent=actionPlan.Paths.length.toLocaleString('de-DE')+' Einträge. '+
+          (action==='DeleteLinks'?'Die aufgelisteten Dateiverknüpfungen werden nach erneuter Prüfung endgültig entfernt. Zugeordnete Jellyfin-Einträge werden abgeglichen.' :
+            'Jellyfin prüft fehlende Bilder mit den aktivierten Anbietern deiner Bibliotheken. Speicherort und Bildtypen richten sich nach deinen Einstellungen.');
+        field('preview-paths').value=actionPlan.Paths.join('\n');
+        field('preview-error').textContent='';
+        field('action-preview').showModal();
+      }catch(e){await bulkError(e);}
+    }
+    async function loadActions() {
+      const data=await ApiClient.getJSON(ApiClient.getUrl('ShelfCheck/Actions'));
+      if(!active)return;
+      const job=data.Job;
+      field('action-report').hidden=!job;
+      if(!job)return;
+      bulkBusy=job.State==='Running'||job.State==='Waiting';
+      const states={Running:'Läuft',Waiting:'Wartet auf den Bibliotheksscan',Completed:'Abgeschlossen',Cancelled:'Abgebrochen',Interrupted:'Unterbrochen',Failed:'Fehlgeschlagen'};
+      field('action-status').textContent=(job.Action==='DeleteLinks'?'Verknüpfungen löschen':'Bilder holen')+' · '+states[job.State]+
+        ' · '+job.Done+' / '+job.Total+' · Erfolgreich '+job.Succeeded+' · Übersprungen '+job.Skipped+' · Fehler '+job.Failed;
+      field('action-path').textContent=job.CurrentPath||'';
+      const labels={Succeeded:'Erfolgreich',Skipped:'Übersprungen',Failed:'Fehler'};
+      field('action-log').textContent=job.Results.map(row=>labels[row.State]+' · '+row.Path+'\n'+row.Detail).join('\n\n');
+      button('cancel-action').hidden=!bulkBusy;
+      updateSelection();
+    }
     const chosen = () => [...field('libraries').querySelectorAll('input:checked')].map(x => x.value).sort().join();
     function selectionControls() {
       const dirty = selectionLoaded && chosen() !== savedSelection;
@@ -139,15 +248,7 @@
     }
     async function loadLibraries() {
       const data = await ApiClient.getJSON(ApiClient.getUrl('ShelfCheck/Libraries'));
-      for (const item of data.Items) {
-        const label = document.createElement('label'), input = document.createElement('input');
-        input.type = 'checkbox'; input.value = item.Id;
-        input.checked = !data.Excluded.includes(item.Id);
-        input.onchange = selectionControls;
-        label.style.cssText = 'display:inline-flex;align-items:center;gap:.5em;margin:.5em 1.5em .5em 0';
-        label.append(input, document.createTextNode(item.Name));
-        field('libraries').append(label);
-      }
+      page.renderLibraryGroups(field('libraries'), data.Items, item=>!data.Excluded.includes(item.Id), selectionControls);
       savedSelection = chosen(); selectionLoaded = true; selectionControls();
     }
     function error(e) { field('error').textContent = 'Abruf fehlgeschlagen. ' + (e.message || e.statusText || 'Bitte erneut versuchen.'); }
@@ -182,17 +283,26 @@
         lib.value = selected;
         const roots = data.Roots.map(r => { const li = document.createElement('li'); li.textContent = r.Library + ' · ' + r.Path; return li; });
         field('roots').replaceChildren(...roots);
+        visibleItems=data.Items;
         field('rows').replaceChildren(...data.Items.map(item => {
           const tr = document.createElement('tr'), path = cell(item.Path);
           path.style.overflowWrap = 'anywhere';
           const kind = cell(labels[item.Code] || item.Code);
           const detail = document.createElement('small'); detail.style.display = 'block'; detail.textContent = item.Detail;
-          kind.append(detail); tr.append(kind, cell(item.Library), cell(item.Kind), path); return tr;
+          const select=cell('');
+          if(eligible(item)) {
+            const input=document.createElement('input');input.type='checkbox';input.checked=selectedPaths.has(item.Path);
+            input.setAttribute('aria-label','Auswählen: '+item.Path);
+            input.onchange=()=>{if(input.checked)selectedPaths.add(item.Path);else selectedPaths.delete(item.Path);updateSelection();};
+            select.append(input);
+          }
+          kind.append(detail); tr.append(select,kind, cell(item.Library), cell(item.Kind), path); return tr;
         }));
         offset = data.Offset;
         field('range').textContent = data.Filtered ? (offset + 1) + '–' + (offset + data.Items.length) + ' von ' + data.Filtered + ' Befunden' : 'Keine passenden Befunde.';
         button('back').disabled = offset === 0;
         button('next').disabled = offset + limit >= data.Filtered;
+        updateSelection();
       } catch (e) { if (active && current === sequence) error(e); }
     }
     async function refresh(id) {
@@ -220,6 +330,7 @@
           result.Status ? 'Letzter Lauf · ' + (states[result.Status] || result.Status) : 'Bereit';
         const run = result.EndTimeUtc || '';
         if (busy || run !== previousRun) { previousRun = run; await loadReport(); }
+        await loadActions();
       } catch (e) { if (active && id === generation) error(e); }
       finally { if (active && id === generation) timer = setTimeout(() => refresh(id), 2500); }
     }
@@ -250,8 +361,24 @@
     };
     button('back').onclick = () => { offset = Math.max(0, offset - limit); loadReport(); };
     button('next').onclick = () => { offset += limit; loadReport(); };
-    for (const name of ['library', 'code']) field(name).onchange = () => { offset = 0; loadReport(); };
-    field('search').oninput = () => { clearTimeout(typing); typing = setTimeout(() => { offset = 0; loadReport(); }, 250); };
+    function resetSelection() {selectedPaths.clear();field('all-matching').checked=false;updateSelection();}
+    for (const name of ['library', 'code']) field(name).onchange = () => { resetSelection();offset = 0; loadReport(); };
+    field('search').oninput = () => { resetSelection();clearTimeout(typing); typing = setTimeout(() => { offset = 0; loadReport(); }, 250); };
+    button('select-page').onclick=()=>{visibleItems.filter(eligible).forEach(item=>selectedPaths.add(item.Path));loadReport();};
+    button('clear-selection').onclick=()=>{resetSelection();loadReport();};
+    field('all-matching').onchange=updateSelection;
+    button('delete-links').onclick=()=>prepareAction('DeleteLinks');
+    button('images').onclick=()=>prepareAction('Images');
+    button('close-preview').onclick=()=>field('action-preview').close();
+    button('confirm-action').onclick=async()=>{
+      button('confirm-action').disabled=true;
+      try {
+        await jsonRequest('/'+actionPlan.Id+'/Start');
+        field('action-preview').close();resetSelection();await loadActions();
+      }catch(e){await bulkError(e);field('preview-error').textContent=field('error').textContent;}
+      finally{button('confirm-action').disabled=false;}
+    };
+    button('cancel-action').onclick=async()=>{try{await jsonRequest('/Cancel');await loadActions();}catch(e){await bulkError(e);}};
     function show() { if (active || page.querySelector('[data-panel=files]').hidden) return; active = true; previousRun = undefined; refresh(++generation); }
     function hide() { active = false; ++sequence; ++generation; clearTimeout(timer); clearTimeout(typing); }
     page.addEventListener('viewshow', show); page.addEventListener('viewhide', hide);
@@ -314,16 +441,7 @@
       const key = JSON.stringify([data.Libraries, data.Selection]);
       if (key !== librariesKey) {
         librariesKey = key;
-        ui('libraries').querySelectorAll('label').forEach(label => label.remove());
-        for (const library of data.Libraries) {
-          const label = document.createElement('label'), checkbox = document.createElement('input');
-          label.style.cssText = 'display:inline-flex;align-items:center;gap:.4em;margin:.4em 1em .4em 0';
-          checkbox.type = 'checkbox'; checkbox.value = library.Id;
-          checkbox.checked = data.Selection.includes(library.Id);
-          checkbox.onchange = renderControls;
-          label.append(checkbox, document.createTextNode(library.Name));
-          ui('libraries').append(label);
-        }
+        page.renderLibraryGroups(ui('libraries'), data.Libraries, library=>data.Selection.includes(library.Id), renderControls);
       }
       const keyHistory = JSON.stringify(data.History);
       if (keyHistory !== historyKey) {

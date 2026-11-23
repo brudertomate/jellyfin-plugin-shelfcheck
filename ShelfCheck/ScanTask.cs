@@ -23,7 +23,8 @@ public sealed class ScanTask(ILibraryManager libraries, NamingOptions naming, Re
             .SelectMany(f => f.Locations).Where(Path.IsPathFullyQualified).ToArray();
         var roots = folders
             .Where(f => !Guid.TryParse(f.ItemId, out var id) || !excluded.Contains(id))
-            .Where(f => f.CollectionType is null or CollectionTypeOptions.mixed or CollectionTypeOptions.movies or CollectionTypeOptions.tvshows)
+            .Where(f => f.CollectionType is null or CollectionTypeOptions.mixed or CollectionTypeOptions.movies or CollectionTypeOptions.tvshows
+                or CollectionTypeOptions.musicvideos or CollectionTypeOptions.homevideos)
             .SelectMany(f => f.Locations.Select(path => new LibraryRoot(f.Name, path, f.CollectionType?.ToString() ?? "mixed")))
             .Distinct().ToList();
         var scanner = new Scanner(naming.VideoFileExtensions,

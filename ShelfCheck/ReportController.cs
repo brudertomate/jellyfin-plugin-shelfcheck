@@ -16,8 +16,9 @@ public sealed class ReportController(ReportStore store, ILibraryManager librarie
     {
         Excluded = store.Excluded,
         Items = libraries.GetVirtualFolders(false)
-            .Where(f => f.CollectionType is null or CollectionTypeOptions.mixed or CollectionTypeOptions.movies or CollectionTypeOptions.tvshows)
-            .Select(f => new { Id = f.ItemId, f.Name })
+            .Select(f => new { Id = f.ItemId, f.Name, Type = f.CollectionType?.ToString() ?? "mixed",
+                Supported = f.CollectionType is null or CollectionTypeOptions.mixed or CollectionTypeOptions.movies or
+                    CollectionTypeOptions.tvshows or CollectionTypeOptions.musicvideos or CollectionTypeOptions.homevideos })
     });
 
     [HttpPut("Libraries")]

@@ -10,7 +10,7 @@ using Microsoft.Extensions.Logging;
 
 namespace ShelfCheck;
 
-public sealed record DateLibrary(Guid Id, string Name, string[] Paths, Guid[] PhysicalIds, bool Eligible);
+public sealed record DateLibrary(Guid Id, string Name, string[] Paths, Guid[] PhysicalIds, bool Eligible, string Type);
 public sealed record DateSyncProgress(long Id, int Done, int Total, string Phase,
     string? CurrentItem = null, DateTime UpdatedUtc = default);
 
@@ -34,7 +34,7 @@ public sealed class DateSync(ILibraryManager libraries, DateRunStore store, IHos
             var scope = GetScope(selection);
             return new
             {
-                Libraries = scope.Libraries.Select(l => new { l.Id, l.Name }),
+                Libraries = scope.Libraries.Select(l => new { l.Id, l.Name, l.Type }),
                 Selection = selection,
                 Active = _progress,
                 Paused = _cancel is null ? store.Unfinished() : null,
@@ -332,7 +332,8 @@ public sealed class DateSync(ILibraryManager libraries, DateRunStore store, IHos
                 var physicalIds = (libraries.GetItemById(id) as CollectionFolder)?.PhysicalFolderIds ?? [];
                 return new DateLibrary(id, f.Name, f.Locations.Where(Path.IsPathFullyQualified).Select(Path.GetFullPath).ToArray(),
                     physicalIds, physicalIds.Length > 0 && f.CollectionType is
-                        (null or CollectionTypeOptions.mixed or CollectionTypeOptions.movies or CollectionTypeOptions.tvshows));
+                        (null or CollectionTypeOptions.mixed or CollectionTypeOptions.movies or CollectionTypeOptions.tvshows),
+                    f.CollectionType?.ToString() ?? "mixed");
             }).ToArray();
     }
 
