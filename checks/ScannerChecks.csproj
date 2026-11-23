@@ -9,5 +9,6 @@
     <Compile Include="../ShelfCheck/Scanner.cs" Link="Scanner.cs" />
     <Compile Include="../ShelfCheck/Report.cs" Link="Report.cs" />
     <Compile Include="../ShelfCheck/BrokenLinkFile.cs" Link="BrokenLinkFile.cs" />
+    <Compile Include="../ShelfCheck/MovieFolderDeletion.cs" Link="MovieFolderDeletion.cs" />
   </ItemGroup>
 </Project>

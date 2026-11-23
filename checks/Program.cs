@@ -53,6 +53,26 @@ try
         excludedReport.Videos != 2)
         throw new InvalidOperationException("Excluded library was scanned.");
     Console.WriteLine("Scanner checks passed.");
+    var cleanup = Path.Join(root.FullName, "Cleanup");
+    var emptyMovie = Path.Join(cleanup, "Empty Movie");
+    Directory.CreateDirectory(Path.Join(emptyMovie, "metadata"));
+    File.WriteAllText(Path.Join(emptyMovie, "movie.nfo"), "metadata");
+    File.WriteAllText(Path.Join(emptyMovie, "metadata", "poster.jpg"), "image");
+    if (!MovieFolderDeletion.DeleteIfNoVideo(emptyMovie, [".mkv", ".mp4"], CancellationToken.None, out _) ||
+        Directory.Exists(emptyMovie))
+        throw new InvalidOperationException("Movie folder was not cleaned.");
+    foreach (var protectedFile in new[] { "movie.mkv", "extras/trailer.mp4", "Season 01/episode.nfo", "tvshow.nfo", ".ignore" })
+    {
+        var protectedMovie = Path.Join(cleanup, Guid.NewGuid().ToString("N"));
+        var protectedPath = Path.Join(protectedMovie, protectedFile);
+        Directory.CreateDirectory(Path.GetDirectoryName(protectedPath)!);
+        File.WriteAllText(protectedPath, "retain");
+        File.WriteAllText(Path.Join(protectedMovie, "poster.jpg"), "retain");
+        if (MovieFolderDeletion.DeleteIfNoVideo(protectedMovie, [".mkv", ".mp4"], CancellationToken.None, out _) ||
+            !File.Exists(protectedPath) || !File.Exists(Path.Join(protectedMovie, "poster.jpg")))
+            throw new InvalidOperationException("Protected movie or series content was deleted.");
+    }
+    Console.WriteLine("Movie folder deletion checks passed.");
     if (!OperatingSystem.IsWindows())
     {
         var target = Path.Join(root.FullName, "link-target.mkv");
@@ -73,6 +93,15 @@ try
         if (BrokenLinkFile.DeleteIfBroken(directoryLink, out _))
             throw new InvalidOperationException("Directory link was deleted.");
         Console.WriteLine("Broken-link deletion checks passed.");
+        var linkedMovie = Path.Join(cleanup, "Linked Movie");
+        Directory.CreateDirectory(linkedMovie);
+        var lastLink = Path.Join(linkedMovie, "missing.mkv");
+        File.CreateSymbolicLink(lastLink, Path.Join(root.FullName, "absent.mkv"));
+        if (MovieFolderDeletion.DeleteIfNoVideo(linkedMovie, [".mkv"], CancellationToken.None, out _))
+            throw new InvalidOperationException("Folder with a link was deleted.");
+        if (!BrokenLinkFile.DeleteIfBroken(lastLink, out _) ||
+            !MovieFolderDeletion.DeleteIfNoVideo(linkedMovie, [".mkv"], CancellationToken.None, out _))
+            throw new InvalidOperationException("Cleanup after last broken link failed.");
     }
 }
 finally

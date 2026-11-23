@@ -19,6 +19,7 @@ public sealed partial class Scanner(IEnumerable<string> videoExtensions, Func<st
 
     [GeneratedRegex(@"^(?:(?:season|staffel|series|s)[ ._-]*(?<number>\d{1,4})|(?<special>specials|extraspecials))$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex SeasonName();
+    public static bool IsSeasonDirectory(string name) => SeasonName().IsMatch(name);
 
     private sealed class Listing
     {

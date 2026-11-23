@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Emby.Naming.Common;
 using MediaBrowser.Common.Configuration;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
@@ -10,8 +11,10 @@ using Microsoft.Extensions.Logging;
 
 namespace ShelfCheck;
 
-public sealed record ActionRequest(string Action, bool AllMatching, string[]? Paths, string? Code, string? Library, string? Search);
-public sealed record ActionPlan(Guid Id, string Action, DateTime CreatedUtc, string[] Paths, LibraryRoot[] Roots);
+public sealed record ActionRequest(string Action, bool AllMatching, string[]? Paths, string? Code, string? Library, string? Search,
+    bool CleanMovieFolders = false);
+public sealed record ActionPlan(Guid Id, string Action, DateTime CreatedUtc, string[] Paths, LibraryRoot[] Roots,
+    bool CleanMovieFolders = false, string[]? MovieFolders = null);
 public sealed record ActionResult(string Path, string State, string Detail);
 public sealed class ActionStatus
 {
@@ -29,7 +32,7 @@ public sealed class ActionStatus
 }
 
 public sealed class FindingActions(ReportStore reports, ILibraryManager libraries, IProviderManager providers,
-    IFileSystem fileSystem, IApplicationPaths paths, IHostApplicationLifetime lifetime, ILogger<FindingActions> logger)
+    IFileSystem fileSystem, IApplicationPaths paths, IHostApplicationLifetime lifetime, ILogger<FindingActions> logger, NamingOptions naming)
     : IAsyncDisposable
 {
     private readonly object _gate = new();
@@ -40,13 +43,18 @@ public sealed class FindingActions(ReportStore reports, ILibraryManager librarie
     private Task _worker = Task.CompletedTask;
     private bool _disposed;
 
-    public static bool Eligible(Finding finding, string action) => action == "Images" ? finding.Code == "MissingCover" :
-        action == "DeleteLinks" && finding.Code == "Unchecked" && finding.Kind == "Datei" &&
-        finding.Detail == "Ziel der Dateiverknüpfung nicht erreichbar.";
+    public static bool Eligible(Finding finding, string action) => action switch
+    {
+        "Images" => finding.Code == "MissingCover",
+        "DeleteMovieFolders" => finding.Code == "NoVideo" && finding.Kind == "Film",
+        "DeleteLinks" => finding.Code == "Unchecked" && finding.Kind == "Datei" &&
+            finding.Detail == "Ziel der Dateiverknüpfung nicht erreichbar.",
+        _ => false
+    };
 
     public ActionPlan Prepare(ActionRequest request)
     {
-        if (request.Action is not ("Images" or "DeleteLinks")) throw new InvalidOperationException("Unbekannte Aktion.");
+        if (request.Action is not ("Images" or "DeleteLinks" or "DeleteMovieFolders")) throw new InvalidOperationException("Unbekannte Aktion.");
         var report = reports.Current ?? throw new InvalidOperationException("Es gibt noch keinen Scanbericht.");
         var selected = (request.Paths ?? []).ToHashSet(StringComparer.Ordinal);
         var matches = report.Findings.Where(f => Eligible(f, request.Action) &&
@@ -59,7 +67,11 @@ public sealed class FindingActions(ReportStore reports, ILibraryManager librarie
         lock (_gate)
         {
             if (_cancel is not null) throw new InvalidOperationException("Es läuft bereits eine Bulk-Aktion.");
-            _plan = new(Guid.NewGuid(), request.Action, DateTime.UtcNow, matches, report.Roots.ToArray());
+            var roots = report.Roots.ToArray();
+            var cleanup = request.Action == "DeleteLinks" && request.CleanMovieFolders;
+            var movieFolders = cleanup ? matches.Select(path => MovieFolderForLink(path, roots))
+                .OfType<string>().Distinct(StringComparer.Ordinal).ToArray() : [];
+            _plan = new(Guid.NewGuid(), request.Action, DateTime.UtcNow, matches, roots, cleanup, movieFolders);
             return _plan;
         }
     }
@@ -115,7 +127,12 @@ public sealed class FindingActions(ReportStore reports, ILibraryManager librarie
                 try
                 {
                     EnsureAllowed(path, plan.Roots);
-                    result = plan.Action == "DeleteLinks" ? DeleteLink(path) : await RefreshImages(path, refreshed, token);
+                    result = plan.Action switch
+                    {
+                        "DeleteLinks" => DeleteLink(path, plan, token),
+                        "DeleteMovieFolders" => DeleteMovieFolder(path, plan.Roots, token),
+                        _ => await RefreshImages(path, refreshed, token)
+                    };
                 }
                 catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
                 catch (Exception ex)
@@ -187,7 +204,7 @@ public sealed class FindingActions(ReportStore reports, ILibraryManager librarie
         return !Path.IsPathRooted(relative) && relative != ".." && !relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal);
     }
 
-    private ActionResult DeleteLink(string path)
+    private ActionResult DeleteLink(string path, ActionPlan plan, CancellationToken token)
     {
         var item = libraries.FindByPath(path, false);
         if (!BrokenLinkFile.DeleteIfBroken(path, out var detail))
@@ -203,7 +220,63 @@ public sealed class FindingActions(ReportStore reports, ILibraryManager librarie
                 return new(path, "Failed", "Verknüpfung entfernt. Jellyfin-Eintrag muss durch einen Bibliotheksscan abgeglichen werden. " + ex.Message);
             }
         }
-        return new(path, "Succeeded", "Defekte Dateiverknüpfung entfernt. Zugeordneter Jellyfin-Eintrag abgeglichen.");
+        var message = "Defekte Dateiverknüpfung entfernt. Zugeordneter Jellyfin-Eintrag abgeglichen.";
+        if (plan.CleanMovieFolders)
+        {
+            if (MovieFolderForLink(path, plan.Roots) is { } folder)
+            {
+                try { message += " " + DeleteMovieFolder(folder, plan.Roots, CancellationToken.None).Detail; }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    return new(path, "Failed", message + " Filmordner konnte nicht bereinigt werden. " + ex.Message);
+                }
+            }
+        }
+        return new(path, "Succeeded", message);
+    }
+
+    private static string? MovieFolderForLink(string path, LibraryRoot[] roots)
+    {
+        var root = roots.FirstOrDefault(root => root.Type == "movies" && Inside(root.Path, path));
+        if (root is null) return null;
+        var relative = Path.GetRelativePath(root.Path, path);
+        var separator = relative.IndexOf(Path.DirectorySeparatorChar);
+        return separator > 0 ? Path.Combine(root.Path, relative[..separator]) : null;
+    }
+
+    private ActionResult DeleteMovieFolder(string path, LibraryRoot[] roots, CancellationToken token)
+    {
+        EnsureAllowed(path, roots);
+        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        var parent = Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(Path.GetFullPath(path)));
+        bool DirectChild(string root) => Path.IsPathFullyQualified(root) &&
+            string.Equals(Path.TrimEndingDirectorySeparator(Path.GetFullPath(root)), parent, comparison);
+        var folders = libraries.GetVirtualFolders(false);
+        if (!roots.Any(root => root.Type == "movies" && DirectChild(root.Path)) ||
+            !folders.Any(folder => folder.CollectionType == CollectionTypeOptions.movies && folder.Locations.Any(DirectChild)))
+            return new(path, "Skipped", "Der Pfad ist kein direkter Filmordner einer Filmbibliothek.");
+        if (folders.Any(folder => folder.Locations.Any(root => Inside(path, root))) ||
+            folders.Any(folder => folder.CollectionType != CollectionTypeOptions.movies &&
+                folder.Locations.Any(root => Inside(root, path))))
+            return new(path, "Skipped", "Pfad überschneidet sich mit einem Bibliotheksstamm oder einer anderen Bibliotheksart. Ordner bleibt erhalten.");
+        var item = libraries.FindByPath(path, true);
+        if (item is MediaBrowser.Controller.Entities.TV.Series or MediaBrowser.Controller.Entities.TV.Season)
+            return new(path, "Skipped", "Jellyfin erkennt diesen Ordner als Serie oder Staffel. Ordner bleibt erhalten.");
+        if (item is Folder && libraries.GetItemList(new InternalItemsQuery
+        {
+            ParentId = item.Id, Recursive = true, Limit = 1, EnableTotalRecordCount = false,
+            IncludeItemTypes = [Jellyfin.Data.Enums.BaseItemKind.Series, Jellyfin.Data.Enums.BaseItemKind.Season,
+                Jellyfin.Data.Enums.BaseItemKind.Episode]
+        }).Count > 0)
+            return new(path, "Skipped", "Jellyfin kennt Serien-, Staffel- oder Episodeneinträge in diesem Ordner. Ordner bleibt erhalten.");
+        if (!MovieFolderDeletion.DeleteIfNoVideo(path, naming.VideoFileExtensions, token, out var detail))
+            return new(path, "Skipped", detail);
+        if (item is not null)
+        {
+            try { libraries.DeleteItem(item, new DeleteOptions { DeleteFileLocation = false, DeleteFromExternalProvider = false }, true); }
+            catch (Exception ex) { return new(path, "Failed", detail + " Jellyfin-Eintrag durch Bibliotheksscan abgleichen. " + ex.Message); }
+        }
+        return new(path, "Succeeded", detail);
     }
 
     private async Task<ActionResult> RefreshImages(string path, HashSet<Guid> refreshed, CancellationToken token)
