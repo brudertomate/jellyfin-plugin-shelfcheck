@@ -4,7 +4,8 @@ using System.Text.RegularExpressions;
 namespace ShelfCheck;
 
 public sealed partial class Scanner(IEnumerable<string> videoExtensions, Func<string, string, bool>? isExtra = null,
-    IEnumerable<string>? extraFolders = null)
+    IEnumerable<string>? extraFolders = null, Action<Report>? update = null,
+    Action<CancellationToken>? wait = null, IEnumerable<string>? excludedPaths = null)
 {
     private static readonly StringComparer Names = StringComparer.OrdinalIgnoreCase;
     private static readonly HashSet<string> ImageExtensions = new([".jpg", ".jpeg", ".png", ".webp", ".tbn"], Names);
@@ -14,6 +15,7 @@ public sealed partial class Scanner(IEnumerable<string> videoExtensions, Func<st
     private readonly Report _report = new();
     private CancellationToken _token;
     private LibraryRoot _root = null!;
+    private long _lastUpdate;
 
     [GeneratedRegex(@"^(?:(?:season|staffel|series|s)[ ._-]*(?<number>\d{1,4})|(?<special>specials|extraspecials))$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex SeasonName();
@@ -32,7 +34,9 @@ public sealed partial class Scanner(IEnumerable<string> videoExtensions, Func<st
     public Report Scan(List<LibraryRoot> roots, IProgress<double> progress, CancellationToken token)
     {
         _token = token;
+        _report.State = "Running";
         _report.Roots.AddRange(roots);
+        Publish(true);
         var lastPercent = -1;
         for (int i = 0; i < roots.Count; i++)
         {
@@ -73,8 +77,30 @@ public sealed partial class Scanner(IEnumerable<string> videoExtensions, Func<st
             if (order == 0) order = string.CompareOrdinal(a.Path, b.Path);
             return order == 0 ? string.CompareOrdinal(a.Code, b.Code) : order;
         });
+        return Finish("Completed");
+    }
+
+    public Report Finish(string state)
+    {
+        _report.State = state;
         _report.FinishedUtc = DateTime.UtcNow;
-        return _report;
+        _report.CurrentPath = "";
+        return Snapshot();
+    }
+
+    private Report Snapshot() => new()
+    {
+        StartedUtc = _report.StartedUtc, FinishedUtc = _report.FinishedUtc, UpdatedUtc = DateTime.UtcNow,
+        State = _report.State, CurrentPath = _report.CurrentPath, Roots = _report.Roots.ToList(),
+        Directories = _report.Directories, Titles = _report.Titles, Seasons = _report.Seasons,
+        Videos = _report.Videos, Findings = _report.Findings.ToList()
+    };
+
+    private void Publish(bool force = false)
+    {
+        if (update is null || (!force && Environment.TickCount64 - _lastUpdate < 1500)) return;
+        _lastUpdate = Environment.TickCount64;
+        update(Snapshot());
     }
 
     private void CheckTitle(DirectoryInfo directory)
@@ -167,6 +193,15 @@ public sealed partial class Scanner(IEnumerable<string> videoExtensions, Func<st
     private Listing Read(DirectoryInfo directory, bool inExtras = false)
     {
         _token.ThrowIfCancellationRequested();
+        wait?.Invoke(_token);
+        if ((excludedPaths ?? []).Any(root =>
+        {
+            var relative = Path.GetRelativePath(root, directory.FullName);
+            return relative == "." || (!Path.IsPathRooted(relative) && relative != ".." &&
+                !relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal));
+        })) return new Listing { Ignored = true, Complete = false };
+        _report.CurrentPath = directory.FullName;
+        Publish();
         var listing = new Listing { InExtras = inExtras };
         try
         {
@@ -178,9 +213,11 @@ public sealed partial class Scanner(IEnumerable<string> videoExtensions, Func<st
 
             _report.Directories++;
             foreach (var entry in directory.EnumerateFileSystemInfos("*", new EnumerationOptions
-                     { IgnoreInaccessible = false, AttributesToSkip = 0 }))
+                     { IgnoreInaccessible = false, AttributesToSkip = 0, BufferSize = 64 * 1024 }))
             {
                 _token.ThrowIfCancellationRequested();
+                wait?.Invoke(_token);
+                Publish();
                 if (entry.Name == ".ignore")
                 {
                     Skip("Ordner mit .ignore übersprungen.");

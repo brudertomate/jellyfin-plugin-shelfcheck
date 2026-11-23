@@ -40,7 +40,13 @@ Die Datumsdatenbank liegt unter `shelfcheck/dates.db`. Bei aktiviertem Jellyfin-
 | Ungeprüft | Ein Bereich war nicht erreichbar, verknüpft, mit `.ignore` markiert oder zu tief verschachtelt. Der betroffene Titel erhält bei unklarem Inhalt keinen Befund „Ohne Video“. |
 | Ablage prüfen | Im Stamm einer Serienbibliothek wurden lose Videodateien gefunden. |
 
-Die Übersicht zeigt Titel, Staffeln, gelesene Ordner und Videos. Ein Pfad kann mehrere Befunde haben. Bibliothek, Befundtyp und Pfadsuche lassen sich kombinieren. Pro Seite werden bis zu 50 Treffer angezeigt. Ein abgebrochener Scan lässt den vorherigen Bericht verfügbar.
+Die Übersicht zeigt laufend Titel, gelesene Ordner, Videos und Befunde sowie aktuellen Pfad, Laufzeit und letzte Aktivität. Ein Pfad kann mehrere Befunde haben. Bibliothek, Befundtyp und Pfadsuche lassen sich kombinieren. Pro Seite werden bis zu 50 Treffer angezeigt.
+
+Unter **Dateibestand → Bibliotheken für diesen Scan** kannst du Bibliotheken ausschließen und die Auswahl speichern. Auch enthaltene Unterpfade ausgeschlossener Bibliotheken werden übersprungen. Die Auswahl gilt für den nächsten manuellen oder geplanten Dateiscan und ist unabhängig von der Freigabe für Datumsänderungen.
+
+**Pause** hält den Dateiscan an der aktuellen Stelle im laufenden Server an. **Fortsetzen** arbeitet dort weiter. **Abbrechen** beendet den Scan und speichert die bis dahin erfassten Ergebnisse als Teilbericht. Etwa alle 30 Sekunden wird zusätzlich ein Zwischenstand gespeichert. Nach einem Serverneustart erscheint ein unterbrochener Dateiscan als Teilbericht und kann neu gestartet werden. Ein Dateisystemzugriff, der gerade auf das Netzlaufwerk wartet, muss zurückkehren, bevor Pause oder Abbruch greifen können.
+
+Der Datumsabgleich zeigt zusätzlich den aktuellen Titel und die letzte Aktivität. Einzelne gespeicherte Datumsänderungen erscheinen laufend im Bericht. **Abbrechen** beendet einen aktiven Abgleich mit erhaltenem Änderungsprotokoll. **Pause** speichert den Fortschritt zum späteren Fortsetzen.
 
 ### Welche Ablage wird erkannt?
 

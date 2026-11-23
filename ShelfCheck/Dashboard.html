@@ -3,6 +3,23 @@
 <head><title>ShelfCheck</title></head>
 <body>
 <div id="shelfCheckPage" data-role="page" class="page type-interior pluginConfigurationPage" data-require="emby-button,emby-input,emby-select">
+  <style>
+    #shelfCheckPage .content-primary { max-width:1280px; margin:auto; padding:1.5em 2em 4em; }
+    #shelfCheckPage h1 { font-size:2em; margin:.25em 0 .8em; }
+    #shelfCheckPage h2 { font-size:1.25em; margin-top:1.6em; }
+    #shelfCheckPage [hidden] { display:none !important; }
+    #shelfCheckPage .sc-card { border:1px solid #ffffff26; border-radius:12px; padding:1.25em; margin:1em 0; background:#ffffff05; }
+    #shelfCheckPage .sc-stats { display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:1em;margin:1.2em 0; }
+    #shelfCheckPage .sc-stats strong { display:block;font-size:1.8em;font-variant-numeric:tabular-nums; }
+    #shelfCheckPage .sc-stats span { opacity:.7;font-size:.9em; }
+    #shelfCheckPage .sc-path { font-size:.9em;opacity:.8;overflow-wrap:anywhere; }
+    #shelfCheckPage fieldset { border:1px solid #ffffff26; border-radius:8px;padding:1em; }
+    #shelfCheckPage table td, #shelfCheckPage table th { padding:.6em;vertical-align:top;border-bottom:1px solid #ffffff16; }
+    #shelfCheckPage table small { opacity:.7;max-width:30em; }
+    #shelfCheckPage [role=alert] { color:#ffb4ab; }
+    #shelfCheckPage progress { width:100%;height:6px;accent-color:#00a4dc; }
+    @media(max-width:600px) { #shelfCheckPage .content-primary {padding:1em;} #shelfCheckPage .sc-card {padding:.8em;} }
+  </style>
   <div data-role="content"><div class="content-primary">
     <h1>ShelfCheck</h1>
     <nav aria-label="ShelfCheck" style="display:flex;gap:.5em;flex-wrap:wrap;margin-bottom:1.5em">
@@ -11,11 +28,31 @@
     </nav>
     <section data-panel="files">
     <p>Prüft die lokalen Videos, Titelposter und Staffelordner deiner Bibliotheken.</p>
+    <details class="sc-card" open data-id="selection">
+      <summary>Bibliotheken für diesen Scan</summary>
+      <p>Haken entfernen, um eine Bibliothek vom Dateiscan auszuschließen.</p>
+      <fieldset data-id="libraries"><legend>Einbezogene Bibliotheken</legend></fieldset>
+      <button is="emby-button" class="raised" data-action="save" disabled>Auswahl speichern</button>
+      <span data-id="selection-note" role="status"></span>
+    </details>
+    <div class="sc-card">
     <button is="emby-button" class="raised button-submit" data-action="start" disabled>Scan starten</button>
+    <button is="emby-button" class="raised" data-action="pause" hidden>Pause</button>
+    <button is="emby-button" class="raised button-submit" data-action="resume" hidden>Fortsetzen</button>
     <button is="emby-button" class="raised" data-action="stop" hidden>Scan abbrechen</button>
     <p role="status" data-id="status">Aufgabe wird geladen …</p>
+    <progress data-id="progress" max="100" value="0" hidden></progress>
+    <div class="sc-stats">
+      <div><strong data-id="directories">0</strong><span>Ordner gelesen</span></div>
+      <div><strong data-id="titles">0</strong><span>Titel eingelesen</span></div>
+      <div><strong data-id="videos">0</strong><span>Videos gefunden</span></div>
+      <div><strong data-id="findings">0</strong><span>Befunde</span></div>
+    </div>
+    <p class="sc-path" data-id="path"></p>
+    <p data-id="activity"></p>
+    </div>
     <p role="alert" data-id="error"></p>
-    <h2>Letzter abgeschlossener Scan</h2>
+    <h2 data-id="report-title">Ergebnisse</h2>
     <p data-id="summary">Bericht wird geladen …</p>
     <section data-id="report" hidden>
       <details><summary>Geprüfte Bibliothekspfade</summary><ul data-id="roots"></ul></details>
@@ -46,6 +83,7 @@
         <button is="emby-button" class="raised" data-date="preview" disabled>Vorschau für gesamten Bestand</button>
         <button is="emby-button" class="raised button-submit" data-date="apply" disabled>Datumsabgleich starten</button>
         <button is="emby-button" class="raised" data-date="pause" hidden>Nach aktuellem Eintrag pausieren</button>
+        <button is="emby-button" class="raised" data-date="abort" hidden>Abbrechen</button>
         <button is="emby-button" class="raised button-submit" data-date="resume" hidden>Fortsetzen</button>
         <button is="emby-button" class="raised" data-date="end" hidden>Lauf beenden</button>
       </div>
@@ -90,7 +128,28 @@
     const labels = { NoVideo: 'Ohne Video', OnlyExtras: 'Nur Trailer und Extras', MissingCover: 'Poster fehlt', MissingSeason: 'Staffelordner fehlt', Unchecked: 'Ungeprüft', Layout: 'Ablage prüfen' };
     const limit = 50;
     let offset = 0, sequence = 0, timer, typing, taskId, previousRun, generation = 0;
-    let active = false, changing = false;
+    let active = false, changing = false, scanBusy = false, paused = false, selectionLoaded = false, savedSelection = '';
+    const chosen = () => [...field('libraries').querySelectorAll('input:checked')].map(x => x.value).sort().join();
+    function selectionControls() {
+      const dirty = selectionLoaded && chosen() !== savedSelection;
+      field('libraries').disabled = scanBusy || changing;
+      button('save').disabled = !dirty || scanBusy || changing;
+      button('start').disabled = !selectionLoaded || scanBusy || changing || dirty || !chosen();
+      field('selection-note').textContent = dirty ? 'Auswahl vor dem Start speichern.' : '';
+    }
+    async function loadLibraries() {
+      const data = await ApiClient.getJSON(ApiClient.getUrl('ShelfCheck/Libraries'));
+      for (const item of data.Items) {
+        const label = document.createElement('label'), input = document.createElement('input');
+        input.type = 'checkbox'; input.value = item.Id;
+        input.checked = !data.Excluded.includes(item.Id);
+        input.onchange = selectionControls;
+        label.style.cssText = 'display:inline-flex;align-items:center;gap:.5em;margin:.5em 1.5em .5em 0';
+        label.append(input, document.createTextNode(item.Name));
+        field('libraries').append(label);
+      }
+      savedSelection = chosen(); selectionLoaded = true; selectionControls();
+    }
     function error(e) { field('error').textContent = 'Abruf fehlgeschlagen. ' + (e.message || e.statusText || 'Bitte erneut versuchen.'); }
     function cell(text) { const td = document.createElement('td'); td.textContent = text; return td; }
     async function loadReport() {
@@ -105,8 +164,18 @@
           field('summary').textContent = 'Noch kein Bericht vorhanden. Starte den ersten Scan.';
           return;
         }
-        field('summary').textContent = new Date(data.FinishedUtc).toLocaleString('de-DE') + ' · ' + data.Directories + ' Ordner · ' +
-          data.Titles + ' Titel · ' + data.Seasons + ' Staffeln · ' + data.Videos + ' Videodateien · ' + data.Total + ' Befunde';
+        paused = !!data.Paused;
+        for (const [name, count] of Object.entries({ directories:data.Directories, titles:data.Titles, videos:data.Videos, findings:data.Total }))
+          field(name).textContent = count.toLocaleString('de-DE');
+        const live = data.State === 'Running';
+        field('report-title').textContent = live ? 'Bisherige Ergebnisse' : data.State === 'Completed' ? 'Scan-Ergebnisse' : 'Teilbericht';
+        field('path').textContent = data.CurrentPath || '';
+        const seconds = Math.max(1, ((live ? Date.now() : new Date(data.FinishedUtc).getTime()) - new Date(data.StartedUtc).getTime()) / 1000);
+        field('activity').textContent = (live ? 'Letzte Aktivität ' + new Date(data.UpdatedUtc).toLocaleTimeString('de-DE') + ' · ' : '') +
+          Math.floor(seconds / 60) + ' Min. Laufzeit' + (live && !paused ? ' · Ø ' + (data.Directories / seconds).toFixed(1) + ' Ordner/s' : '');
+        field('summary').textContent = (live ? 'Ergebnisse aktualisieren sich während des Scans.' :
+          data.State === 'Completed' ? new Date(data.FinishedUtc).toLocaleString('de-DE') :
+            'Unvollständiger Scan. Bereits erfasste Befunde bleiben verfügbar.');
         const lib = field('library'), selected = lib.value;
         lib.replaceChildren(new Option('Alle Bibliotheken', ''));
         for (const name of new Set(data.Roots.map(r => r.Library))) lib.add(new Option(name, name));
@@ -135,16 +204,22 @@
         if (!task) throw new Error('ShelfCheck-Aufgabe nicht gefunden.');
         taskId = task.Id;
         const busy = task.State !== 'Idle';
-        button('start').disabled = busy || changing;
+        scanBusy = busy;
+        selectionControls();
+        button('pause').hidden = !busy || paused;
+        button('resume').hidden = !busy || !paused;
+        button('pause').disabled = button('resume').disabled = changing || task.State !== 'Running';
+        field('progress').hidden = !busy;
+        field('progress').value = task.CurrentProgressPercentage || 0;
         button('stop').hidden = !busy;
         button('stop').disabled = task.State !== 'Running' || changing;
         const result = task.LastExecutionResult || {};
         const states = { Completed: 'Abgeschlossen', Failed: 'Fehlgeschlagen', Cancelled: 'Abgebrochen', Aborted: 'Unterbrochen' };
         field('status').textContent = busy ? (task.State === 'Cancelling' ? 'Abbruch läuft …' :
-          'Scan läuft · ' + Math.floor(task.CurrentProgressPercentage || 0) + ' %') :
+          paused ? 'Scan pausiert' : 'Scan läuft · ca. ' + Math.floor(task.CurrentProgressPercentage || 0) + ' % der Titelordner') :
           result.Status ? 'Letzter Lauf · ' + (states[result.Status] || result.Status) : 'Bereit';
         const run = result.EndTimeUtc || '';
-        if (run !== previousRun) { previousRun = run; await loadReport(); }
+        if (busy || run !== previousRun) { previousRun = run; await loadReport(); }
       } catch (e) { if (active && id === generation) error(e); }
       finally { if (active && id === generation) timer = setTimeout(() => refresh(id), 2500); }
     }
@@ -159,6 +234,20 @@
     }
     button('start').onclick = () => change('POST');
     button('stop').onclick = () => change('DELETE');
+    for (const action of ['pause', 'resume']) button(action).onclick = async () => {
+      try {
+        await ApiClient.fetch({url:ApiClient.getUrl('ShelfCheck/' + action), type:'POST'});
+        paused = action === 'pause'; refresh(++generation);
+      } catch(e) { error(e); }
+    };
+    button('save').onclick = async () => {
+      const excluded = [...field('libraries').querySelectorAll('input:not(:checked)')].map(x => x.value);
+      try {
+        await ApiClient.fetch({url:ApiClient.getUrl('ShelfCheck/Libraries'), type:'PUT',
+          contentType:'application/json', data:JSON.stringify(excluded)});
+        savedSelection = chosen(); selectionControls();
+      } catch(e) {error(e);}
+    };
     button('back').onclick = () => { offset = Math.max(0, offset - limit); loadReport(); };
     button('next').onclick = () => { offset += limit; loadReport(); };
     for (const name of ['library', 'code']) field(name).onchange = () => { offset = 0; loadReport(); };
@@ -168,6 +257,7 @@
     page.addEventListener('viewshow', show); page.addEventListener('viewhide', hide);
     page.addEventListener('pageshow', show); page.addEventListener('pagehide', hide);
     page.addEventListener('shelfcheckpane', () => { if (page.querySelector('[data-panel=files]').hidden) hide(); else show(); });
+    loadLibraries().catch(error);
     show();
   })();
   (function () {
@@ -204,14 +294,17 @@
       ui('apply').disabled = dirty || !data.CanApply || !!(active || paused || busy);
       ui('apply').textContent = data.Incremental ? 'Neue und geänderte Einträge abgleichen' : 'Datumsabgleich starten';
       ui('pause').hidden = !active;
+      ui('abort').hidden = !active;
       ui('resume').hidden = ui('end').hidden = !paused;
-      for (const action of ['resume', 'end', 'pause', 'undo']) ui(action).disabled = busy;
+      for (const action of ['resume', 'end', 'pause', 'abort', 'undo']) ui(action).disabled = busy;
       ui('undo').hidden = !(report?.Run.Mode === 'Apply' && !active && !paused &&
         ((report.Counts.Changed || 0) + (report.Counts.Writing || 0) + (report.Counts.Failed || 0) > 0));
       ui('status').textContent = active ?
         (active.Phase === 'Waiting' ? 'Wartet auf den Jellyfin-Bibliotheksscan. ' :
           active.Phase === 'Preparing' ? 'Einträge werden ermittelt. ' : 'Lauf aktiv. ') +
-          (active.Total ? active.Done.toLocaleString('de-DE') + ' von ' + active.Total.toLocaleString('de-DE') + ' bearbeitet.' : '') :
+          (active.Total ? active.Done.toLocaleString('de-DE') + ' von ' + active.Total.toLocaleString('de-DE') + ' bearbeitet. ' : '') +
+          (active.CurrentItem ? 'Aktuell: ' + active.CurrentItem + '. ' : '') +
+          (active.UpdatedUtc ? 'Letzte Aktivität ' + new Date(active.UpdatedUtc).toLocaleTimeString('de-DE') : '') :
         paused ? 'Pausiert. ' + (paused.Message || '') :
         !data.Selection.length ? 'Wähle die Bibliotheken aus und speichere deine Auswahl.' :
         !data.CanApply ? 'Erstelle zuerst eine Vorschau für diese Auswahl.' : 'Bereit.';
@@ -243,6 +336,10 @@
         loadRun();
       }
       renderControls();
+      if (data.Active) {
+        if (ui('history').value !== String(data.Active.Id)) { ui('history').value = data.Active.Id; offset = 0; }
+        loadRun();
+      }
     }
     async function refresh(generation) {
       clearTimeout(polling);
@@ -312,7 +409,7 @@
         renderControls();
       }
     }
-    for (const name of ['preview', 'apply', 'pause', 'resume', 'end']) {
+    for (const name of ['preview', 'apply', 'pause', 'resume', 'end', 'abort']) {
       ui(name).onclick = () => {
         if (name === 'apply' && !data?.Incremental && !window.confirm('Veröffentlichungsdatum für die freigegebenen Bibliotheken übernehmen?')) return;
         if (name === 'end' && !window.confirm('Lauf beenden? Bereits übernommene Änderungen bleiben im Verlauf.')) return;

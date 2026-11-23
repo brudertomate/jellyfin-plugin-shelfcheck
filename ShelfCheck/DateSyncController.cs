@@ -38,6 +38,9 @@ public sealed class DateSyncController(DateSync sync, DateRunStore store) : Cont
     [HttpPost("End")]
     public IActionResult End() => Result(sync.EndPaused());
 
+    [HttpPost("Abort")]
+    public IActionResult Abort() { sync.Abort(); return NoContent(); }
+
     [HttpGet("Runs/{id:long}")]
     public IActionResult Report(long id, [FromQuery] string? outcome, [FromQuery] int offset = 0)
     {

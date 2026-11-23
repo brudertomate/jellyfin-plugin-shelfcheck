@@ -34,6 +34,24 @@ try
         throw new InvalidOperationException("Cancellation was ignored.");
     }
     catch (OperationCanceledException) when (cancelled.IsCancellationRequested) { }
+    Report? live = null;
+    using var interrupted = new CancellationTokenSource();
+    var partialScanner = new Scanner([".mp4", ".mkv"], update: snapshot =>
+    {
+        live = snapshot;
+        interrupted.Cancel();
+    });
+    try { partialScanner.Scan(roots, new Progress<double>(), interrupted.Token); }
+    catch (OperationCanceledException) when (interrupted.IsCancellationRequested) { }
+    var partial = partialScanner.Finish("Cancelled");
+    if (live?.State != "Running" || partial.State != "Cancelled" || partial.FinishedUtc == default)
+        throw new InvalidOperationException("Partial report was lost.");
+    var excludedPath = Path.Join(root.FullName, "Movies");
+    var excludedReport = new Scanner([".mp4", ".mkv"], excludedPaths: [excludedPath])
+        .Scan(roots, new Progress<double>(), CancellationToken.None);
+    if (excludedReport.Findings.Any(f => f.Path.StartsWith(excludedPath, StringComparison.Ordinal)) ||
+        excludedReport.Videos != 2)
+        throw new InvalidOperationException("Excluded library was scanned.");
     Console.WriteLine("Scanner checks passed.");
 }
 finally

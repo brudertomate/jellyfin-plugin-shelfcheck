@@ -3,7 +3,7 @@
     <TargetFramework>net10.0</TargetFramework>
     <AssemblyName>Jellyfin.Plugin.ShelfCheck</AssemblyName>
     <RootNamespace>ShelfCheck</RootNamespace>
-    <Version>1.1.0.0</Version>
+    <Version>1.2.0.0</Version>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>

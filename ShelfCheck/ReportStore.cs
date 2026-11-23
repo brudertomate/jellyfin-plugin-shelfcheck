@@ -8,6 +8,34 @@ public sealed class ReportStore(IApplicationPaths paths)
     private readonly string _file = Path.Combine(paths.DataPath, "shelfcheck", "report.json");
     private readonly object _sync = new();
     private Report? _current;
+    private DateTime _checkpoint;
+    private readonly string _selectionFile = Path.Combine(paths.DataPath, "shelfcheck", "scan-excluded.json");
+
+    public Guid[] Excluded
+    {
+        get
+        {
+            lock (_sync) return File.Exists(_selectionFile) ?
+                JsonSerializer.Deserialize<Guid[]>(File.ReadAllText(_selectionFile)) ?? [] : [];
+        }
+        set
+        {
+            lock (_sync)
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(_file)!);
+                File.WriteAllText(_selectionFile + ".tmp", JsonSerializer.Serialize(value));
+                File.Move(_selectionFile + ".tmp", _selectionFile, true);
+            }
+        }
+    }
+
+    public void UpdateLive(Report report)
+    {
+        lock (_sync) _current = report;
+        if (DateTime.UtcNow - _checkpoint < TimeSpan.FromSeconds(30)) return;
+        PublishAsync(report, CancellationToken.None).GetAwaiter().GetResult();
+        _checkpoint = DateTime.UtcNow;
+    }
 
     public Report? Current
     {
@@ -19,6 +47,7 @@ public sealed class ReportStore(IApplicationPaths paths)
                 {
                     using var stream = File.OpenRead(_file);
                     _current = JsonSerializer.Deserialize<Report>(stream);
+                    if (_current?.State == "Running") _current.State = "Interrupted";
                 }
 
                 return _current;

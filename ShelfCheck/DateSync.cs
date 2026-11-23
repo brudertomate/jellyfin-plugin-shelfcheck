@@ -11,7 +11,8 @@ using Microsoft.Extensions.Logging;
 namespace ShelfCheck;
 
 public sealed record DateLibrary(Guid Id, string Name, string[] Paths, Guid[] PhysicalIds, bool Eligible);
-public sealed record DateSyncProgress(long Id, int Done, int Total, string Phase);
+public sealed record DateSyncProgress(long Id, int Done, int Total, string Phase,
+    string? CurrentItem = null, DateTime UpdatedUtc = default);
 
 public sealed class DateSync(ILibraryManager libraries, DateRunStore store, IHostApplicationLifetime lifetime,
     ILogger<DateSync> logger) : IAsyncDisposable
@@ -23,6 +24,7 @@ public sealed class DateSync(ILibraryManager libraries, DateRunStore store, IHos
     private Task _worker = Task.CompletedTask;
     private DateSyncProgress? _progress;
     private bool _disposed;
+    private bool _endRequested;
 
     public object Status()
     {
@@ -82,6 +84,16 @@ public sealed class DateSync(ILibraryManager libraries, DateRunStore store, IHos
         lock (_gate) _cancel?.Cancel();
     }
 
+    public void Abort()
+    {
+        lock (_gate)
+        {
+            if (_cancel is null) return;
+            _endRequested = true;
+            _cancel.Cancel();
+        }
+    }
+
     public string? EndPaused()
     {
         lock (_gate)
@@ -119,8 +131,9 @@ public sealed class DateSync(ILibraryManager libraries, DateRunStore store, IHos
         }
 
         var cancel = CancellationTokenSource.CreateLinkedTokenSource(token, lifetime.ApplicationStopping);
+        _endRequested = false;
         _cancel = cancel;
-        _progress = new(id, 0, 0, "Preparing");
+        _progress = new(id, 0, 0, "Preparing", UpdatedUtc: DateTime.UtcNow);
         _worker = Task.Run(() => RunAsync(id, scope, progress, cancel));
         return null;
     }
@@ -162,7 +175,9 @@ public sealed class DateSync(ILibraryManager libraries, DateRunStore store, IHos
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested)
         {
-            store.State(id, "Paused", "Fortschritt gespeichert. Du kannst den Lauf fortsetzen.");
+            store.State(id, _endRequested ? "Stopped" : "Paused", _endRequested ?
+                "Lauf abgebrochen. Bereits übernommene Änderungen bleiben im Verlauf." :
+                "Fortschritt gespeichert. Du kannst den Lauf fortsetzen.");
         }
         catch (Exception ex)
         {
@@ -226,10 +241,13 @@ public sealed class DateSync(ILibraryManager libraries, DateRunStore store, IHos
                 token.ThrowIfCancellationRequested();
                 await WaitForLibraryAsync(run.Id, null, null, token);
                 var fresh = libraries.GetItemById(row.Id);
+                lock (_gate) _progress = _progress! with { CurrentItem = fresh?.Name, UpdatedUtc = DateTime.UtcNow };
                 var planned = Plan(run, scope, row, fresh);
                 if (planned.Status == "Writing" && fresh is not null)
                 {
-                    results.Add(await Write(run, fresh, planned));
+                    var written = await Write(run, fresh, planned);
+                    store.SaveRows(run.Id, [written]);
+                    lock (_gate) _progress = _progress! with { Done = _progress.Done + 1, UpdatedUtc = DateTime.UtcNow };
                     await Task.Delay(WriteDelay, token);
                 }
                 else results.Add(planned);
@@ -300,7 +318,8 @@ public sealed class DateSync(ILibraryManager libraries, DateRunStore store, IHos
 
     private void SetProgress(long id, int? done, int? total, string phase)
     {
-        lock (_gate) _progress = new(id, done ?? _progress!.Done, total ?? _progress!.Total, phase);
+        lock (_gate) _progress = new(id, done ?? _progress!.Done, total ?? _progress!.Total, phase,
+            _progress?.CurrentItem, DateTime.UtcNow);
     }
 
     private DateLibrary[] GetLibraries()
