@@ -73,6 +73,32 @@ try
             throw new InvalidOperationException("Protected movie or series content was deleted.");
     }
     Console.WriteLine("Movie folder deletion checks passed.");
+    var seriesFolder = Path.Join(cleanup, "Series");
+    var emptySeason = Path.Join(seriesFolder, "Season 02");
+    Directory.CreateDirectory(Path.Join(emptySeason, "metadata"));
+    File.WriteAllText(Path.Join(seriesFolder, "tvshow.nfo"), "retain series");
+    File.WriteAllText(Path.Join(emptySeason, "season.nfo"), "season metadata");
+    File.WriteAllText(Path.Join(emptySeason, "metadata", "poster.jpg"), "image");
+    if (!MovieFolderDeletion.DeleteIfNoVideo(emptySeason, [".mkv"], CancellationToken.None, out _, isSeason: true) ||
+        !File.Exists(Path.Join(seriesFolder, "tvshow.nfo")) || !Directory.Exists(seriesFolder))
+        throw new InvalidOperationException("Season cleanup damaged the series folder.");
+    if (MovieFolderDeletion.DeleteIfNoVideo(seriesFolder, [".mkv"], CancellationToken.None, out _, isSeason: true))
+        throw new InvalidOperationException("Series folder was accepted as a season.");
+    var protectedSeasonNumber = 3;
+    foreach (var fileName in new[] { "episode.mkv", "tvshow.nfo", ".ignore" })
+    {
+        var protectedSeason = Path.Join(seriesFolder, "Season " + protectedSeasonNumber++);
+        Directory.CreateDirectory(protectedSeason);
+        File.WriteAllText(Path.Join(protectedSeason, fileName), "retain");
+        if (MovieFolderDeletion.DeleteIfNoVideo(protectedSeason, [".mkv"], CancellationToken.None, out _, isSeason: true) ||
+            !File.Exists(Path.Join(protectedSeason, fileName)))
+            throw new InvalidOperationException("Protected season content was deleted.");
+    }
+    var specials = Path.Join(seriesFolder, "Specials");
+    Directory.CreateDirectory(specials);
+    if (!MovieFolderDeletion.DeleteIfNoVideo(specials, [".mkv"], CancellationToken.None, out _, isSeason: true))
+        throw new InvalidOperationException("Empty specials folder was not cleaned.");
+    Console.WriteLine("Season folder deletion checks passed.");
     if (!OperatingSystem.IsWindows())
     {
         var target = Path.Join(root.FullName, "link-target.mkv");

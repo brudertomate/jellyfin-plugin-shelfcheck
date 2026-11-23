@@ -2,13 +2,20 @@ namespace ShelfCheck;
 
 public static class MovieFolderDeletion
 {
-    public static bool DeleteIfNoVideo(string path, IEnumerable<string> videoExtensions, CancellationToken token, out string detail)
+    public static bool DeleteIfNoVideo(string path, IEnumerable<string> videoExtensions, CancellationToken token, out string detail,
+        bool isSeason = false)
     {
         var root = new DirectoryInfo(path);
+        var kind = isSeason ? "Staffelordner" : "Filmordner";
         if (root.Parent is null) throw new InvalidOperationException("Ein Dateisystem-Stammordner kann nicht entfernt werden.");
+        if (isSeason && !Scanner.IsSeasonDirectory(root.Name))
+        {
+            detail = "Der Ordnername entspricht keinem erkannten Staffelordner.";
+            return false;
+        }
         if (!root.Exists)
         {
-            detail = "Filmordner wurde bereits entfernt.";
+            detail = kind + " wurde bereits entfernt.";
             return false;
         }
         var extensions = new HashSet<string>(videoExtensions.Concat([".disc"]), StringComparer.OrdinalIgnoreCase);
@@ -21,7 +28,7 @@ public static class MovieFolderDeletion
             token.ThrowIfCancellationRequested();
             EnsureNoDirectoryLinks(root.FullName, next.Directory.FullName);
             if (next.Depth > 96) throw new InvalidOperationException("Ordnerstruktur ist zu tief für eine vollständige Prüfung.");
-            if (Scanner.IsSeasonDirectory(next.Directory.Name))
+            if (Scanner.IsSeasonDirectory(next.Directory.Name) && !(isSeason && next.Depth == 0))
             {
                 detail = "Staffelstruktur erkannt. Ordner bleibt erhalten.";
                 return false;
@@ -38,7 +45,7 @@ public static class MovieFolderDeletion
                 }
                 if (entry.Name.Equals(".ignore", StringComparison.OrdinalIgnoreCase) ||
                     entry.Name.Equals("tvshow.nfo", StringComparison.OrdinalIgnoreCase) ||
-                    entry.Name.Equals("season.nfo", StringComparison.OrdinalIgnoreCase))
+                    (!isSeason && entry.Name.Equals("season.nfo", StringComparison.OrdinalIgnoreCase)))
                 {
                     detail = "Serien-/Staffelmetadaten oder .ignore erkannt. Ordner bleibt erhalten.";
                     return false;
@@ -67,7 +74,7 @@ public static class MovieFolderDeletion
             EnsureNoDirectoryLinks(root.FullName, directories[i].FullName);
             Directory.Delete(directories[i].FullName, recursive: false);
         }
-        detail = "Filmordner ohne Video einschließlich seiner Begleitdateien entfernt.";
+        detail = kind + " ohne Video einschließlich seiner Begleitdateien entfernt.";
         return true;
     }
 
@@ -76,13 +83,13 @@ public static class MovieFolderDeletion
         var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
         var relative = Path.GetRelativePath(root, path);
         if (Path.IsPathRooted(relative) || relative == ".." || relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal))
-            throw new IOException("Pfad liegt außerhalb des geprüften Filmordners.");
+            throw new IOException("Pfad liegt außerhalb des geprüften Ordners.");
         for (var directory = new DirectoryInfo(path); directory is not null; directory = directory.Parent)
         {
             if ((directory.Attributes & FileAttributes.ReparsePoint) != 0)
                 throw new IOException("Verzeichnisverknüpfung erkannt. Ordner bleibt erhalten.");
             if (directory.FullName.Equals(root, comparison)) return;
         }
-        throw new IOException("Filmordner konnte nicht eindeutig zugeordnet werden.");
+        throw new IOException("Ordner konnte nicht eindeutig zugeordnet werden.");
     }
 }
