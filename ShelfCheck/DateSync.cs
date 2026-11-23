@@ -261,11 +261,9 @@ public sealed class DateSync(ILibraryManager libraries, DateRunStore store, IHos
 
     private static DateRow Plan(DateRun run, Scope scope, DateRow row, BaseItem? item)
     {
-        if (item is null || item.IsVirtualItem || !item.IsFileProtocol || item.Path is not { Length: > 0 } path ||
-            !scope.Allows(path))
-            return row with { Status = "Skipped", Detail = "Eintrag fehlt, ist virtuell oder liegt außerhalb der freigegebenen Bibliotheken." };
-
-        row = row with { Name = item.Name, Kind = item.GetType().Name, Detail = null };
+        row = Describe(scope, row, item);
+        if (row.Detail is not null) return row with { Status = "Skipped" };
+        if (item is null) throw new InvalidOperationException("Eintrag konnte nicht geladen werden.");
         var current = item.DateCreated.Ticks;
         if (row.Status == "Writing" || run.Mode == "Undo")
         {
@@ -285,6 +283,46 @@ public sealed class DateSync(ILibraryManager libraries, DateRunStore store, IHos
             return row with { Status = "Unchanged", Before = current, After = premiere.Value.Ticks, Revision = revision };
 
         return row with { Status = run.Mode == "Preview" ? "Proposed" : "Writing", Before = current, After = premiere.Value.Ticks };
+    }
+
+    private static DateRow Describe(Scope scope, DateRow row, BaseItem? item)
+    {
+        if (item is null)
+            return row with { Detail = "Jellyfin konnte diesen Eintrag nicht laden. Er wurde möglicherweise entfernt. " +
+                "Über die Jellyfin-ID kannst du ihn zuordnen. Eine neue Vorschau prüft den aktuellen Bestand." };
+        row = row with
+        {
+            Name = item.Name, Kind = item.GetType().Name, Path = item.Path,
+            Libraries = scope.LibraryNames(item.Path), Detail = null
+        };
+        if (item.IsVirtualItem)
+            return row with { Detail = "Virtueller Jellyfin-Eintrag. Für diesen Eintrag ist keine vorhandene Mediendatei hinterlegt." };
+        if (string.IsNullOrWhiteSpace(item.Path))
+            return row with { Detail = "Jellyfin hat für diesen Eintrag keinen Pfad gespeichert." };
+        if (!item.IsFileProtocol)
+            return row with { Detail = "Der Eintrag verwendet keinen lokalen Dateipfad. Der Datumsabgleich unterstützt lokale Bibliothekseinträge." };
+        return row with { Detail = scope.Rejection(item.Path) };
+    }
+
+    public DateRunReport EnrichLegacyReport(DateRunReport report)
+    {
+        var legacy = report.Items.Where(row => row.Status == "Skipped" && row.Path is null).ToArray();
+        if (legacy.Length == 0) return report;
+        var items = libraries.GetItemList(new InternalItemsQuery
+        {
+            ItemIds = legacy.Select(row => row.Id).ToArray(), EnableTotalRecordCount = false
+        }).ToDictionary(item => item.Id);
+        var scope = GetScope(store.GetSelection());
+        return report with
+        {
+            Items = report.Items.Select(row =>
+            {
+                if (row.Status != "Skipped" || row.Path is not null) return row;
+                var described = Describe(scope, row, items.GetValueOrDefault(row.Id) ?? libraries.GetItemById(row.Id));
+                return described with { Detail = "Aktuelle Prüfung zu einem älteren Bericht: " +
+                    (described.Detail ?? "Der Eintrag ist mit der aktuellen Bibliotheksauswahl freigegeben. Der frühere Einzelgrund wurde nicht gespeichert.") };
+            }).ToList()
+        };
     }
 
     private async Task<DateRow> Write(DateRun run, BaseItem item, DateRow row)
@@ -345,7 +383,8 @@ public sealed class DateSync(ILibraryManager libraries, DateRunStore store, IHos
         var excluded = all.Where(l => !includedIds.Contains(l.Id)).SelectMany(l => l.Paths).Distinct().Order().ToArray();
         var shape = included.OrderBy(l => l.Id).Select(l => new { l.Id, Paths = l.Paths.Order(), Ids = l.PhysicalIds.Order() });
         var key = Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new { shape, excluded })));
-        return new(all.Where(l => l.Eligible && l.Paths.Length > 0).ToArray(), included, excluded, key);
+        return new(all.Where(l => l.Eligible && l.Paths.Length > 0).ToArray(), included, excluded, key,
+            all.Where(l => !includedIds.Contains(l.Id)).ToArray());
     }
 
     private static string Brief(Exception ex)
@@ -366,10 +405,27 @@ public sealed class DateSync(ILibraryManager libraries, DateRunStore store, IHos
         await worker;
     }
 
-    private sealed record Scope(DateLibrary[] Libraries, DateLibrary[] Included, string[] Excluded, string Key)
+    private sealed record Scope(DateLibrary[] Libraries, DateLibrary[] Included, string[] Excluded, string Key,
+        DateLibrary[] ExcludedLibraries)
     {
-        public bool Allows(string path) => !Excluded.Any(root => Contains(root, path)) &&
-            Included.Any(l => l.Paths.Any(root => Contains(root, path)));
+        public string? Rejection(string path)
+        {
+            if (!Path.IsPathFullyQualified(path))
+                return "Der gespeicherte Pfad ist kein absoluter Dateisystempfad.";
+            var blocked = ExcludedLibraries.SelectMany(l => l.Paths.Where(root => Contains(root, path))
+                .Select(root => "„" + l.Name + "“ mit Pfad „" + root + "“")).ToArray();
+            if (blocked.Length > 0)
+                return "Pfadausschluss durch abgewählte Bibliothek: " + string.Join(", ", blocked) +
+                    ". Der Ausschluss hat Vorrang. Bibliotheksauswahl und überlappende Pfade prüfen.";
+            if (!Included.Any(l => l.Paths.Any(root => Contains(root, path))))
+                return "Der Eintrag liegt außerhalb der ausgewählten Bibliothekspfade. Freigegeben sind: " +
+                    string.Join(", ", Included.SelectMany(l => l.Paths.Select(root => "„" + l.Name + "“: " + root))) + ".";
+            return null;
+        }
+
+        public string? LibraryNames(string? path) => string.IsNullOrWhiteSpace(path) || !Path.IsPathFullyQualified(path)
+            ? null : string.Join(", ", Included.Concat(ExcludedLibraries)
+                .Where(l => l.Paths.Any(root => Contains(root, path))).Select(l => l.Name).Distinct());
 
         private static bool Contains(string root, string path)
         {

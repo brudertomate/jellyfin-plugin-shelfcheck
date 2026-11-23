@@ -6,7 +6,8 @@ using Microsoft.Data.Sqlite;
 namespace ShelfCheck;
 
 public sealed record DateRun(long Id, string Mode, string State, long Started, long? Ended, string Scope, long? Source, string? Message);
-public sealed record DateRow(Guid Id, string Status, string? Name, string? Kind, long? Before, long? After, string? Detail, long? Revision = null);
+public sealed record DateRow(Guid Id, string Status, string? Name, string? Kind, long? Before, long? After, string? Detail,
+    long? Revision = null, string? Path = null, string? Libraries = null);
 public sealed record DateRunReport(DateRun Run, Dictionary<string, int> Counts, List<DateRow> Items, int Total, int Offset);
 
 public sealed class DateRunStore(IApplicationPaths paths)
@@ -49,6 +50,16 @@ public sealed class DateRunStore(IApplicationPaths paths)
                         UPDATE runs SET state = 'Paused', message = 'Der Server wurde während des Laufs beendet.' WHERE state = 'Running';
                         """);
                     schema.ExecuteNonQuery();
+                    var columns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    using (var info = Command(connection, "PRAGMA table_info(entries)"))
+                    using (var reader = info.ExecuteReader())
+                        while (reader.Read()) columns.Add(reader.GetString(1));
+                    foreach (var name in new[] { "path", "libraries" })
+                    {
+                        if (columns.Contains(name)) continue;
+                        using var migration = Command(connection, "ALTER TABLE entries ADD COLUMN " + name + " TEXT");
+                        migration.ExecuteNonQuery();
+                    }
                     _initialized = true;
                 }
                 return connection;
@@ -139,8 +150,8 @@ public sealed class DateRunStore(IApplicationPaths paths)
         if (run.Source is long source)
         {
             using var undo = Command(db, """
-                INSERT INTO entries (run,item,status,name,kind,before,after)
-                SELECT $run,e.item,'Pending',e.name,e.kind,e.after,e.before FROM entries e
+                INSERT INTO entries (run,item,status,name,kind,before,after,path,libraries)
+                SELECT $run,e.item,'Pending',e.name,e.kind,e.after,e.before,e.path,e.libraries FROM entries e
                 WHERE e.run=$source AND e.status IN ('Changed','Writing','Failed') AND e.before IS NOT NULL
                 AND NOT EXISTS (
                     SELECT 1 FROM entries newer JOIN runs r ON r.id=newer.run
@@ -181,7 +192,7 @@ public sealed class DateRunStore(IApplicationPaths paths)
     {
         using var db = Open();
         using var command = Command(db, """
-            SELECT e.item,e.status,e.name,e.kind,e.before,e.after,e.detail,c.revision
+            SELECT e.item,e.status,e.name,e.kind,e.before,e.after,e.detail,c.revision,e.path,e.libraries
             FROM entries e LEFT JOIN checked c ON c.item=e.item
             WHERE e.run=$run AND e.status = CASE WHEN EXISTS (
                 SELECT 1 FROM entries WHERE run=$run AND status='Writing'
@@ -195,10 +206,10 @@ public sealed class DateRunStore(IApplicationPaths paths)
         using var db = Open();
         using var tx = db.BeginTransaction();
         using var command = Command(db, """
-            UPDATE entries SET status=$status,name=$name,kind=$kind,before=$before,after=$after,detail=$detail
+            UPDATE entries SET status=$status,name=$name,kind=$kind,before=$before,after=$after,detail=$detail,path=$path,libraries=$libraries
             WHERE run=$run AND item=$item
             """, ("$run", id), ("$item", ""), ("$status", ""), ("$name", null), ("$kind", null),
-            ("$before", null), ("$after", null), ("$detail", null));
+            ("$before", null), ("$after", null), ("$detail", null), ("$path", null), ("$libraries", null));
         command.Transaction = tx;
         command.Prepare();
         using var checkedItem = Command(db, "INSERT OR REPLACE INTO checked VALUES ($item,$revision,$status)",
@@ -214,6 +225,8 @@ public sealed class DateRunStore(IApplicationPaths paths)
             command.Parameters["$before"].Value = (object?)row.Before ?? DBNull.Value;
             command.Parameters["$after"].Value = (object?)row.After ?? DBNull.Value;
             command.Parameters["$detail"].Value = (object?)row.Detail ?? DBNull.Value;
+            command.Parameters["$path"].Value = (object?)row.Path ?? DBNull.Value;
+            command.Parameters["$libraries"].Value = (object?)row.Libraries ?? DBNull.Value;
             command.ExecuteNonQuery();
             if (row.Revision is long revision && row.Status is "Changed" or "Unchanged" or "Missing")
             {
@@ -248,7 +261,7 @@ public sealed class DateRunStore(IApplicationPaths paths)
             : counts.GetValueOrDefault(status);
         offset = Math.Clamp(offset, 0, Math.Max(0, (total - 1) / 50 * 50));
         using var rows = Command(db, """
-            SELECT item,status,name,kind,before,after,detail,NULL FROM entries
+            SELECT item,status,name,kind,before,after,detail,NULL,path,libraries FROM entries
             WHERE run=$run AND (($status IS NULL AND status NOT IN ('Pending','Writing','Unchanged')) OR status=$status)
             ORDER BY rowid LIMIT 50 OFFSET $offset
             """, ("$run", id), ("$status", status), ("$offset", offset));
@@ -272,7 +285,8 @@ public sealed class DateRunStore(IApplicationPaths paths)
         using var r = command.ExecuteReader();
         var result = new List<DateRow>();
         while (r.Read())
-            result.Add(new(Guid.Parse(r.GetString(0)), r.GetString(1), Text(r, 2), Text(r, 3), Number(r, 4), Number(r, 5), Text(r, 6), Number(r, 7)));
+            result.Add(new(Guid.Parse(r.GetString(0)), r.GetString(1), Text(r, 2), Text(r, 3), Number(r, 4), Number(r, 5), Text(r, 6),
+                Number(r, 7), Text(r, 8), Text(r, 9)));
         return result;
     }
 

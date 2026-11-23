@@ -45,7 +45,7 @@ public sealed class DateSyncController(DateSync sync, DateRunStore store) : Cont
     public IActionResult Report(long id, [FromQuery] string? outcome, [FromQuery] int offset = 0)
     {
         var report = store.Report(id, outcome, offset);
-        return report is null ? NotFound() : Ok(report);
+        return report is null ? NotFound() : Ok(sync.EnrichLegacyReport(report));
     }
 
     private IActionResult Result(string? error) => error is null ? NoContent() : Conflict(new { Message = error });

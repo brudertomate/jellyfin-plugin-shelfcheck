@@ -29,6 +29,10 @@ Der Abgleich verarbeitet bis zu 32 Einträge pro Paket mit höchstens zehn Schre
 
 Die Datumsdatenbank liegt unter `shelfcheck/dates.db`. Bei aktiviertem Jellyfin-NFO-Speicher kann Jellyfin die Datumsänderung auch in die NFO schreiben. Ein späterer Metadaten-Refresh kann das Datum aus einer vorhandenen NFO oder aus der Dateierstellungszeit übernehmen. Prüfe nach der Vorschau zunächst eine kleine Bibliothek inklusive der Anzeige **Zuletzt hinzugefügt**, deren Sortierung von der Datumsänderung betroffen sein kann.
 
+Der Datumsbericht enthält auch für übersprungene Einträge den verfügbaren Namen, Typ, Dateipfad, passende Bibliotheken und die Jellyfin-ID. Er unterscheidet fehlende Einträge, virtuelle Einträge, fehlende Pfade, nicht lokale Pfade und Pfadausschlüsse. Bei überlappenden Bibliotheken nennt er die abgewählte Bibliothek und deren ausschließenden Pfad. Diese Angaben stehen auch unter **Bericht kopieren**.
+
+Bei älteren Berichten mit der früheren Sammelmeldung werden die sichtbaren Einträge beim Öffnen anhand der aktuellen Jellyfin-Daten ergänzt. Die Ergänzung ist als **Aktuelle Prüfung zu einem älteren Bericht** gekennzeichnet. Ein inzwischen entfernter Eintrag lässt sich weiterhin über seine gespeicherte Jellyfin-ID zuordnen.
+
 ## Bericht lesen
 
 | Befund | Bedeutung |

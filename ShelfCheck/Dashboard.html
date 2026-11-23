@@ -493,7 +493,14 @@
             link.href = '#/details?id=' + encodeURIComponent(item.Id) + '&serverId=' + encodeURIComponent(ApiClient.serverId());
             link.textContent = item.Name;
             title.append(link, document.createTextNode(kinds[item.Kind] ? ' · ' + kinds[item.Kind] : ''));
-          } else title.textContent = 'Jellyfin-Eintrag';
+            } else title.textContent = 'Eintrag ' + item.Id;
+            for (const value of [item.Libraries ? 'Bibliotheken: ' + item.Libraries : null,
+              item.Path ? 'Pfad: ' + item.Path : null, 'Jellyfin-ID: ' + item.Id]) {
+              if (!value) continue;
+              const info = document.createElement('small');
+              info.style.cssText = 'display:block;overflow-wrap:anywhere;max-width:38em';
+              info.textContent = value; title.append(info);
+            }
           const outcome = textCell(outcomes[item.Status]);
           if (item.Detail) {
             const detail = document.createElement('small'); detail.style.display = 'block'; detail.textContent = item.Detail;
@@ -548,8 +555,10 @@
       const message = ['ShelfCheck · ' + modes[run.Mode] + ' #' + run.Id + ' · ' + states[run.State],
         'Beginn: ' + stamp(run.Started), summary(report), run.Message || '',
         ...(report.Items.length ? ['', 'Angezeigte Einträge:'] : []),
-        ...report.Items.map(item => (item.Name || 'Eintrag') + ' · ' + day(item.Before) + ' → ' + day(item.After) +
-          ' · ' + outcomes[item.Status] + (item.Detail ? ' · ' + item.Detail : ''))].join('\n');
+        ...report.Items.map(item => (item.Name || 'Eintrag') + (kinds[item.Kind] ? ' · ' + kinds[item.Kind] : '') +
+          ' · ' + day(item.Before) + ' → ' + day(item.After) + ' · ' + outcomes[item.Status] +
+          (item.Detail ? '\nGrund: ' + item.Detail : '') + (item.Path ? '\nPfad: ' + item.Path : '') +
+          (item.Libraries ? '\nBibliotheken: ' + item.Libraries : '') + '\nJellyfin-ID: ' + item.Id)].join('\n');
       try {
         await navigator.clipboard.writeText(message);
         ui('note').textContent = 'Bericht kopiert.';
