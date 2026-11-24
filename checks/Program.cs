@@ -120,6 +120,20 @@ try
             throw new InvalidOperationException("Series with protected contents was deleted.");
     }
     Console.WriteLine("Series folder deletion checks passed.");
+    var unknownTitle = Path.Join(cleanup, "Unknown Title");
+    Directory.CreateDirectory(Path.Join(unknownTitle, "Season 01"));
+    File.WriteAllText(Path.Join(unknownTitle, "tvshow.nfo"), "metadata");
+    File.WriteAllText(Path.Join(unknownTitle, "Season 01", "season.nfo"), "metadata");
+    if (!MovieFolderDeletion.DeleteIfNoVideo(unknownTitle, [".mkv"], CancellationToken.None, out _, kind: FolderCleanupKind.Title) ||
+        Directory.Exists(unknownTitle))
+        throw new InvalidOperationException("Unclassified title could not be cleaned.");
+    var protectedTitle = Path.Join(cleanup, "Protected Title");
+    Directory.CreateDirectory(Path.Join(protectedTitle, "nested", "deep"));
+    File.WriteAllText(Path.Join(protectedTitle, "nested", "deep", "video.mkv"), "retain");
+    if (MovieFolderDeletion.DeleteIfNoVideo(protectedTitle, [".mkv"], CancellationToken.None, out _, kind: FolderCleanupKind.Title) ||
+        !File.Exists(Path.Join(protectedTitle, "nested", "deep", "video.mkv")))
+        throw new InvalidOperationException("Video in an unclassified title was deleted.");
+    Console.WriteLine("Unclassified title deletion checks passed.");
     if (!OperatingSystem.IsWindows())
     {
         var target = Path.Join(root.FullName, "link-target.mkv");
@@ -148,6 +162,8 @@ try
             throw new InvalidOperationException("Folder with a link was deleted.");
         if (MovieFolderDeletion.DeleteIfNoVideo(linkedMovie, [".mkv"], CancellationToken.None, out _, kind: FolderCleanupKind.Series))
             throw new InvalidOperationException("Series with a broken link was deleted.");
+        if (MovieFolderDeletion.DeleteIfNoVideo(linkedMovie, [".mkv"], CancellationToken.None, out _, kind: FolderCleanupKind.Title))
+            throw new InvalidOperationException("Unclassified title with a broken link was deleted.");
         if (!BrokenLinkFile.DeleteIfBroken(lastLink, out _) ||
             !MovieFolderDeletion.DeleteIfNoVideo(linkedMovie, [".mkv"], CancellationToken.None, out _))
             throw new InvalidOperationException("Cleanup after last broken link failed.");
