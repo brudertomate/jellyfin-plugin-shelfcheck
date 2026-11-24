@@ -129,7 +129,7 @@ public sealed class FindingActions(ReportStore reports, ILibraryManager librarie
                 ActionResult result;
                 try
                 {
-                    EnsureAllowed(path, plan.Roots);
+                    if (plan.Action != "DeleteEmptyFolders") EnsureAllowed(path, plan.Roots);
                     result = plan.Action switch
                     {
                         "DeleteLinks" => DeleteLink(path, plan, token),
@@ -346,6 +346,11 @@ public sealed class FindingActions(ReportStore reports, ILibraryManager librarie
 
     private ActionResult DeleteEmptyFolder(string path, LibraryRoot[] roots, CancellationToken token)
     {
+        try { File.GetAttributes(path); }
+        catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
+        {
+            return new(path, "Skipped", "Ordner wurde bereits entfernt, möglicherweise zusammen mit seinem ausgewählten Serienordner.");
+        }
         EnsureAllowed(path, roots);
         var fullPath = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
         var directory = new DirectoryInfo(fullPath);
