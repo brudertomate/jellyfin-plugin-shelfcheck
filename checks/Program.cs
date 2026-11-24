@@ -53,6 +53,70 @@ try
         excludedReport.Videos != 2)
         throw new InvalidOperationException("Excluded library was scanned.");
     Console.WriteLine("Scanner checks passed.");
+    var calls = new List<string>();
+    PosterSource Source(string name, PosterAttempt outcome) => new(name, _ =>
+    {
+        calls.Add(name);
+        return Task.FromResult(outcome);
+    });
+    var foundPoster = await PosterSearch.Run([Source("First", PosterAttempt.Missing),
+        Source("Second", PosterAttempt.Found), Source("Third", PosterAttempt.Found)], CancellationToken.None);
+    if (!foundPoster.Found || foundPoster.CanUsePlaceholder || !calls.SequenceEqual(["First", "Second"]))
+        throw new InvalidOperationException("Poster provider order was not preserved.");
+    var missingPoster = await PosterSearch.Run([Source("First", PosterAttempt.Missing),
+        Source("Second", PosterAttempt.Missing), Source("Third", PosterAttempt.Missing)], CancellationToken.None);
+    if (!missingPoster.CanUsePlaceholder || missingPoster.Checked != 3)
+        throw new InvalidOperationException("A completed empty search did not allow fallback.");
+    var failedPoster = await PosterSearch.Run([new("Failure", _ => throw new IOException("Provider unavailable")),
+        Source("Second", PosterAttempt.Missing)], CancellationToken.None);
+    if (failedPoster.CanUsePlaceholder || failedPoster.Errors.Count != 1)
+        throw new InvalidOperationException("Provider failure was hidden by a placeholder.");
+    var disabledPosters = await PosterSearch.Run([Source("Disabled", PosterAttempt.Unsupported)], CancellationToken.None);
+    if (disabledPosters.CanUsePlaceholder || disabledPosters.Checked != 0)
+        throw new InvalidOperationException("A placeholder was allowed without a completed provider search.");
+    using (var cancellation = new CancellationTokenSource())
+    {
+        cancellation.Cancel();
+        try
+        {
+            await PosterSearch.Run([Source("Cancelled", PosterAttempt.Missing)], cancellation.Token);
+            throw new InvalidOperationException("Poster search ignored cancellation.");
+        }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { }
+    }
+    var placeholderRoot = Path.Join(root.FullName, "PlaceholderFixtures");
+    var placeholderMovie = Path.Join(placeholderRoot, "Movies", "Movie");
+    var placeholderSeries = Path.Join(placeholderRoot, "Series", "Show");
+    Directory.CreateDirectory(placeholderMovie);
+    Directory.CreateDirectory(Path.Join(placeholderSeries, "Season 01"));
+    File.WriteAllText(Path.Join(placeholderMovie, "movie.mkv"), "video");
+    File.WriteAllText(Path.Join(placeholderSeries, "Season 01", "episode.mkv"), "video");
+    foreach (var (imagePath, imageKind) in new[]
+    {
+        (Path.Join(placeholderMovie, "poster.png"), PlaceholderKind.Cover),
+        (Path.Join(placeholderSeries, "poster.png"), PlaceholderKind.Cover),
+        (Path.Join(placeholderSeries, "season01-poster.png"), PlaceholderKind.Season)
+    })
+    {
+        using (var source = PlaceholderImages.Open(imageKind))
+        using (var output = File.Create(imagePath)) source.CopyTo(output);
+        if (PlaceholderImages.Identify(imagePath) != imageKind)
+            throw new InvalidOperationException("Wrong placeholder kind detected.");
+    }
+    var placeholderReport = new Scanner([".mkv"]).Scan([
+        new("Movies", Path.Join(placeholderRoot, "Movies"), "movies"),
+        new("Series", Path.Join(placeholderRoot, "Series"), "tvshows")
+    ], new Progress<double>(), CancellationToken.None);
+    if (placeholderReport.Findings.Count(f => f.Code == "PlaceholderCover") != 3 ||
+        placeholderReport.Findings.Any(f => f.Code == "MissingCover"))
+        throw new InvalidOperationException("Placeholders hid a missing-poster retry.");
+    var alteredImage = Path.Join(placeholderRoot, "real.png");
+    using (var original = PlaceholderImages.Open(PlaceholderKind.Cover))
+    using (var output = File.Create(alteredImage)) original.CopyTo(output);
+    using (var changed = File.OpenWrite(alteredImage)) changed.WriteByte(0);
+    if (PlaceholderImages.Identify(alteredImage) is not null)
+        throw new InvalidOperationException("A different image was identified as a placeholder.");
+    Console.WriteLine("Poster fallback, provider order and placeholder detection checks passed.");
     var cleanup = Path.Join(root.FullName, "Cleanup");
     var emptyMovie = Path.Join(cleanup, "Empty Movie");
     Directory.CreateDirectory(Path.Join(emptyMovie, "metadata"));

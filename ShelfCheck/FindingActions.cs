@@ -26,13 +26,15 @@ public sealed class ActionStatus
     public int Succeeded { get; set; }
     public int Skipped { get; set; }
     public int Failed { get; set; }
+    public int Placeholders { get; set; }
     public string? CurrentPath { get; set; }
     public DateTime UpdatedUtc { get; set; }
     public List<ActionResult> Results { get; set; } = [];
 }
 
 public sealed class FindingActions(ReportStore reports, ILibraryManager libraries, IProviderManager providers,
-    IFileSystem fileSystem, IApplicationPaths paths, IHostApplicationLifetime lifetime, ILogger<FindingActions> logger, NamingOptions naming)
+    IFileSystem fileSystem, IApplicationPaths paths, IHostApplicationLifetime lifetime, ILogger<FindingActions> logger, NamingOptions naming,
+    PosterFallback posterFallback, PlaceholderIndex placeholders)
     : IAsyncDisposable
 {
     private readonly object _gate = new();
@@ -45,7 +47,7 @@ public sealed class FindingActions(ReportStore reports, ILibraryManager librarie
 
     public static bool Eligible(Finding finding, string action) => action switch
     {
-        "Images" => finding.Code == "MissingCover",
+        "Images" => finding.Code is "MissingCover" or "PlaceholderCover",
         "DeleteMovieFolders" => finding.Code == "NoVideo" && finding.Kind == "Film",
         "DeleteSeasonFolders" => finding.Code == "NoVideo" && finding.Kind == "Staffel",
         "DeleteSeriesFolders" => finding.Code == "NoVideo" && finding.Kind == "Serie",
@@ -60,7 +62,8 @@ public sealed class FindingActions(ReportStore reports, ILibraryManager librarie
         if (request.Action is not ("Images" or "DeleteLinks" or "DeleteMovieFolders" or "DeleteSeasonFolders" or "DeleteSeriesFolders" or "DeleteEmptyFolders")) throw new InvalidOperationException("Unbekannte Aktion.");
         var report = reports.Current ?? throw new InvalidOperationException("Es gibt noch keinen Scanbericht.");
         var selected = (request.Paths ?? []).ToHashSet(StringComparer.Ordinal);
-        var matches = report.Findings.Where(f => Eligible(f, request.Action) &&
+        var knownPlaceholders = placeholders.Snapshot;
+        var matches = report.Findings.Select(f => PlaceholderIndex.Decorate(f, knownPlaceholders)).Where(f => Eligible(f, request.Action) &&
             (request.AllMatching || selected.Contains(f.Path)) &&
             (string.IsNullOrEmpty(request.Code) || f.Code == request.Code) &&
             (string.IsNullOrEmpty(request.Library) || f.Library == request.Library) &&
@@ -153,6 +156,7 @@ public sealed class FindingActions(ReportStore reports, ILibraryManager librarie
                         JsonSerializer.Serialize(result) + Environment.NewLine);
                     _status!.Done++;
                     if (result.State == "Succeeded") _status.Succeeded++;
+                    else if (result.State == "Placeholder") _status.Placeholders++;
                     else if (result.State == "Skipped") _status.Skipped++;
                     else _status.Failed++;
                     _status.Results.Add(result);
@@ -408,6 +412,8 @@ public sealed class FindingActions(ReportStore reports, ILibraryManager librarie
             ForceSave = true
         }, token);
         var after = libraries.GetItemById(item.Id) ?? item;
+        var fallbackResult = await posterFallback.Fill(after, path, token);
+        if (fallbackResult is not null) return fallbackResult;
         return after.HasImage(ImageType.Primary)
             ? new(path, "Succeeded", $"Bilder geprüft. Poster in Jellyfin vorhanden. {Math.Max(0, after.ImageInfos.Length - before)} zusätzliche Bilder.")
             : new(path, "Skipped", "Bildanbieter geprüft. Kein Poster verfügbar. Anbieter, Kennungen oder Bibliothekseinstellungen prüfen.");

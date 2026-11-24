@@ -93,7 +93,7 @@
         <label>Befund<select is="emby-select" data-id="code">
           <option value="">Alle Befunde</option><option value="NoVideo">Ohne Video</option>
           <option value="OnlyExtras">Nur Trailer und Extras</option>
-          <option value="MissingCover">Poster fehlt</option><option value="MissingSeason">Staffelordner fehlt</option>
+          <option value="MissingCover">Poster fehlt</option><option value="PlaceholderCover">Platzhaltercover</option><option value="MissingSeason">Staffelordner fehlt</option>
           <option value="Unchecked">Ungeprüft</option><option value="Layout">Ablage prüfen</option>
         </select></label>
         <label>Pfad durchsuchen<input is="emby-input" type="search" data-id="search"></label>
@@ -190,7 +190,7 @@
     page.dataset.ready = '1';
     const field = name => page.querySelector('[data-id="' + name + '"]');
     const button = name => page.querySelector('[data-action="' + name + '"]');
-    const labels = { NoVideo: 'Ohne Video', OnlyExtras: 'Nur Trailer und Extras', MissingCover: 'Poster fehlt', MissingSeason: 'Staffelordner fehlt', Unchecked: 'Ungeprüft', Layout: 'Ablage prüfen' };
+    const labels = { NoVideo: 'Ohne Video', OnlyExtras: 'Nur Trailer und Extras', MissingCover: 'Poster fehlt', PlaceholderCover: 'Platzhaltercover', MissingSeason: 'Staffelordner fehlt', Unchecked: 'Ungeprüft', Layout: 'Ablage prüfen' };
     const limit = 50;
     let offset = 0, sequence = 0, timer, typing, taskId, previousRun, generation = 0;
     let active = false, changing = false, scanBusy = false, paused = false, selectionLoaded = false, savedSelection = '';
@@ -204,14 +204,14 @@
       DeleteSeasonFolders:'Die aufgelisteten Staffelordner werden nach vollständiger erneuter Prüfung samt Begleitdateien endgültig entfernt. Übergeordnete Serienordner bleiben erhalten.',
       DeleteSeriesFolders:'Die aufgelisteten Serienordner werden einschließlich ihrer Staffel- und Unterordner sowie aller Begleitdateien endgültig entfernt. Vor jedem Löschen wird der gesamte Inhalt erneut auf Videos, Medienplatzhalter und Verknüpfungen geprüft.',
       DeleteEmptyFolders:'Die aufgelisteten Ordner werden samt Unterordnern und Begleitdateien endgültig entfernt, wenn die vollständige erneute Prüfung keine Videos, Medienplatzhalter, Verknüpfungen oder unlesbaren Bereiche findet. Dies gilt für Filme, Serien, Staffeln und noch nicht zugeordnete Titel. Bibliotheksstämme sind geschützt.',
-      Images:'Jellyfin prüft fehlende Bilder mit den aktivierten Anbietern deiner Bibliotheken. Speicherort und Bildtypen richten sich nach deinen Einstellungen.'
+      Images:'Jellyfin prüft fehlende Bilder mit den aktivierten Anbietern deiner Bibliotheken. Nach fehlerfreier Postersuche ohne Treffer erhalten Filme und Serien ein Platzhaltercover und Staffeln ein separates Staffelposter. Vorhandene Platzhalter werden erneut nach echten Postern durchsucht. Speicherort und Bildtypen richten sich nach deinen Einstellungen.'
     };
-    let visibleItems = [], actionPlan, bulkBusy = false;
+    let visibleItems = [], actionPlan, bulkBusy = false, actionRevision;
     function updateSelection() {
       field('selected-count').textContent = field('all-matching').checked ? 'Alle passenden Treffer des Filters' : selectedPaths.size + ' ausgewählt';
       for (const name of ['delete-links','delete-empty-folders','images']) button(name).disabled = bulkBusy || (!field('all-matching').checked && !selectedPaths.size);
     }
-    const eligible = item => item.Code === 'MissingCover' || (item.Code === 'NoVideo' && ['Film','Staffel','Serie','Titel'].includes(item.Kind)) ||
+    const eligible = item => ['MissingCover','PlaceholderCover'].includes(item.Code) || (item.Code === 'NoVideo' && ['Film','Staffel','Serie','Titel'].includes(item.Kind)) ||
       (item.Code === 'Unchecked' && item.Kind === 'Datei' && item.Detail === 'Ziel der Dateiverknüpfung nicht erreichbar.');
     async function jsonRequest(path, payload) {
       const response = await ApiClient.fetch({url:ApiClient.getUrl('ShelfCheck/Actions'+path),type:'POST',
@@ -247,12 +247,14 @@
       bulkBusy=job.State==='Running'||job.State==='Waiting';
       const states={Running:'Läuft',Waiting:'Wartet auf den Bibliotheksscan',Completed:'Abgeschlossen',Cancelled:'Abgebrochen',Interrupted:'Unterbrochen',Failed:'Fehlgeschlagen'};
       field('action-status').textContent=actionNames[job.Action]+' · '+states[job.State]+
-        ' · '+job.Done+' / '+job.Total+' · Erfolgreich '+job.Succeeded+' · Übersprungen '+job.Skipped+' · Fehler '+job.Failed;
+        ' · '+job.Done+' / '+job.Total+' · Erfolgreich '+job.Succeeded+' · Platzhalter '+(job.Placeholders || 0)+' · Übersprungen '+job.Skipped+' · Fehler '+job.Failed;
       field('action-path').textContent=job.CurrentPath||'';
-      const labels={Succeeded:'Erfolgreich',Skipped:'Übersprungen',Failed:'Fehler'};
+      const labels={Succeeded:'Erfolgreich',Placeholder:'Platzhalter',Skipped:'Übersprungen',Failed:'Fehler'};
       field('action-log').textContent=job.Results.map(row=>labels[row.State]+' · '+row.Path+'\n'+row.Detail).join('\n\n');
       button('cancel-action').hidden=!bulkBusy;
       updateSelection();
+      const revision=job.Id+':'+job.Done+':'+job.State;
+      if(actionRevision!==revision){actionRevision=revision;if(job.Done>0)await loadReport();}
     }
     const chosen = () => [...field('libraries').querySelectorAll('input:checked')].map(x => x.value).sort().join();
     function selectionControls() {

@@ -28,6 +28,7 @@ public sealed partial class Scanner(IEnumerable<string> videoExtensions, Func<st
         public int Extras { get; set; }
         public bool InExtras { get; init; }
         public HashSet<string> Images { get; } = new(Names);
+        public HashSet<string> Placeholders { get; } = new(Names);
         public bool Complete { get; set; } = true;
         public bool Ignored { get; set; }
     }
@@ -53,7 +54,9 @@ public sealed partial class Scanner(IEnumerable<string> videoExtensions, Func<st
                     _token.ThrowIfCancellationRequested();
                     _report.Titles++;
                     if (listing.Complete && !HasNamedPoster(listing, video))
-                        Add(Path.Combine(directory.FullName, video), "Videodatei", "MissingCover", "Dateibezogenes Poster fehlt.");
+                        Add(Path.Combine(directory.FullName, video), "Videodatei",
+                            HasNamedPoster(listing, video, placeholder: true) ? "PlaceholderCover" : "MissingCover",
+                            HasNamedPoster(listing, video, placeholder: true) ? "ShelfCheck-Platzhalter vorhanden. Echtes Poster kann erneut gesucht werden." : "Dateibezogenes Poster fehlt.");
                 }
             }
             else if (listing.Videos.Count > 0)
@@ -137,26 +140,41 @@ public sealed partial class Scanner(IEnumerable<string> videoExtensions, Func<st
                 var prefix = number == 0 ? "season-specials" : "season" + number.ToString("00", CultureInfo.InvariantCulture);
                 if (childListing.Complete && listing.Complete && !HasCover(childListing, "season") &&
                     !listing.Images.Contains(prefix + "-poster") && !listing.Images.Contains(child.Name.Replace(" ", "") + "-poster"))
-                    Add(child.FullName, "Staffel", "MissingCover", "Weder Staffelcover noch zugehöriges Poster im Serienordner gefunden.");
+                {
+                    var placeholder = HasCover(childListing, "season", placeholder: true) ||
+                        listing.Placeholders.Contains(prefix + "-poster") ||
+                        listing.Placeholders.Contains(child.Name.Replace(" ", "") + "-poster");
+                    Add(child.FullName, "Staffel", placeholder ? "PlaceholderCover" : "MissingCover",
+                        placeholder ? "ShelfCheck-Staffelplatzhalter vorhanden. Echtes Staffelposter kann erneut gesucht werden." :
+                        "Weder Staffelcover noch zugehöriges Poster im Serienordner gefunden.");
+                }
                 CheckVideos(child.FullName, "Staffel", result.Videos, result.Extras, result.Complete);
             }
         }
 
         CheckVideos(directory.FullName, kind, videos, extras, complete);
         if (listing.Complete && !HasCover(listing, series ? "show" : "movie"))
-            Add(directory.FullName, kind, "MissingCover", "Lokales Titelposter fehlt.");
+        {
+            var placeholder = HasCover(listing, series ? "show" : "movie", placeholder: true);
+            Add(directory.FullName, kind, placeholder ? "PlaceholderCover" : "MissingCover",
+                placeholder ? "ShelfCheck-Platzhalter vorhanden. Echtes Cover kann erneut gesucht werden." : "Lokales Titelposter fehlt.");
+        }
         if (series && !hasSeason && listing.Complete)
             Add(directory.FullName, kind, "MissingSeason", "Kein Staffelordner erkannt. Flache Episodenablage ist möglich.");
     }
 
-    private static bool HasCover(Listing listing, string alternate) =>
-        PosterNames.Any(listing.Images.Contains) || listing.Images.Contains(alternate)
-        || (alternate == "movie" && listing.Videos.Any(video => HasNamedPoster(listing, video)));
-
-    private static bool HasNamedPoster(Listing listing, string video)
+    private static bool HasCover(Listing listing, string alternate, bool placeholder = false)
     {
+        var images = placeholder ? listing.Placeholders : listing.Images;
+        return PosterNames.Any(images.Contains) || images.Contains(alternate)
+            || (alternate == "movie" && listing.Videos.Any(video => HasNamedPoster(listing, video, placeholder)));
+    }
+
+    private static bool HasNamedPoster(Listing listing, string video, bool placeholder = false)
+    {
+        var images = placeholder ? listing.Placeholders : listing.Images;
         var stem = Path.GetFileNameWithoutExtension(video);
-        return listing.Images.Contains(stem) || PosterNames.Any(name => listing.Images.Contains(stem + "-" + name));
+        return images.Contains(stem) || PosterNames.Any(name => images.Contains(stem + "-" + name));
     }
 
     private void CheckVideos(string path, string kind, int videos, int extras, bool complete)
@@ -242,7 +260,11 @@ public sealed partial class Scanner(IEnumerable<string> videoExtensions, Func<st
                             listing.Videos.Add(entry.Name);
                     }
                     else
-                        listing.Images.Add(Path.GetFileNameWithoutExtension(entry.Name));
+                    {
+                        var images = PlaceholderImages.Identify(entry.FullName, ((FileInfo)entry).Length) is null
+                            ? listing.Images : listing.Placeholders;
+                        images.Add(Path.GetFileNameWithoutExtension(entry.Name));
+                    }
                 }
             }
         }

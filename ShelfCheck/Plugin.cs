@@ -22,5 +22,5 @@ public sealed class Services : IPluginServiceRegistrator
 {
     public void RegisterServices(IServiceCollection services, IServerApplicationHost host) =>
         services.AddSingleton<ReportStore>().AddSingleton<ScanControl>().AddSingleton<DateRunStore>().AddSingleton<DateSync>()
-            .AddSingleton<FindingActions>();
+            .AddSingleton<FindingActions>().AddSingleton<PosterFallback>().AddSingleton<PlaceholderIndex>();
 }

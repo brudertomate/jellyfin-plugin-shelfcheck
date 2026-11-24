@@ -10,5 +10,8 @@
     <Compile Include="../ShelfCheck/Report.cs" Link="Report.cs" />
     <Compile Include="../ShelfCheck/BrokenLinkFile.cs" Link="BrokenLinkFile.cs" />
     <Compile Include="../ShelfCheck/MovieFolderDeletion.cs" Link="MovieFolderDeletion.cs" />
+    <Compile Include="../ShelfCheck/PlaceholderImages.cs" Link="PlaceholderImages.cs" />
+    <Compile Include="../ShelfCheck/PosterSearch.cs" Link="PosterSearch.cs" />
+    <EmbeddedResource Include="../ShelfCheck/Assets/*.png" LogicalName="ShelfCheck.Assets.%(Filename)%(Extension)" />
   </ItemGroup>
 </Project>

@@ -9,7 +9,7 @@ namespace ShelfCheck;
 [ApiController]
 [Route("ShelfCheck")]
 [Authorize(Policy = Policies.RequiresElevation)]
-public sealed class ReportController(ReportStore store, ILibraryManager libraries, ScanControl control) : ControllerBase
+public sealed class ReportController(ReportStore store, ILibraryManager libraries, ScanControl control, PlaceholderIndex placeholders) : ControllerBase
 {
     [HttpGet("Libraries")]
     public IActionResult Libraries() => Ok(new
@@ -42,7 +42,8 @@ public sealed class ReportController(ReportStore store, ILibraryManager librarie
         var report = store.Current;
         if (report is null) return Ok(new { Available = false });
 
-        var matches = report.Findings.Where(f =>
+        var knownPlaceholders = placeholders.Snapshot;
+        var matches = report.Findings.Select(f => PlaceholderIndex.Decorate(f, knownPlaceholders)).Where(f =>
             (string.IsNullOrEmpty(code) || f.Code == code) &&
             (string.IsNullOrEmpty(library) || f.Library == library) &&
             (string.IsNullOrEmpty(search) || f.Path.Contains(search, StringComparison.OrdinalIgnoreCase)));
