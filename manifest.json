@@ -8,6 +8,14 @@
     "category": "General",
     "versions": [
       {
+        "version": "1.8.0.0",
+        "targetAbi": "12.4.0.0",
+        "sourceUrl": "https://github.com/brudertomate/jellyfin-plugin-shelfcheck/releases/download/v1.8.0.0/ShelfCheck-1.8.0.0.zip",
+        "checksum": "4c5632ffaed7d711fe58589bfbbf2113",
+        "timestamp": "2026-11-25T05:41:48Z",
+        "changelog": "https://github.com/brudertomate/jellyfin-plugin-shelfcheck/releases/tag/v1.8.0.0"
+      },
+      {
         "version": "1.7.0.0",
         "targetAbi": "12.4.0.0",
         "sourceUrl": "https://github.com/brudertomate/jellyfin-plugin-shelfcheck/releases/download/v1.7.0.0/ShelfCheck-1.7.0.0.zip",
