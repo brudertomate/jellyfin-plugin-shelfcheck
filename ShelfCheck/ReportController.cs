@@ -43,11 +43,12 @@ public sealed class ReportController(ReportStore store, ILibraryManager librarie
         if (report is null) return Ok(new { Available = false });
 
         var knownPlaceholders = placeholders.Snapshot;
-        var matches = report.Findings.Select(f => PlaceholderIndex.Decorate(f, knownPlaceholders)).Where(f =>
-            (string.IsNullOrEmpty(code) || f.Code == code) &&
+        var scoped = report.Findings.Select(f => PlaceholderIndex.Decorate(f, knownPlaceholders)).Where(f =>
             (string.IsNullOrEmpty(library) || f.Library == library) &&
-            (string.IsNullOrEmpty(search) || f.Path.Contains(search, StringComparison.OrdinalIgnoreCase)));
-        var count = matches.Count();
+            (string.IsNullOrEmpty(search) || f.Path.Contains(search, StringComparison.OrdinalIgnoreCase))).ToArray();
+        var counts = scoped.GroupBy(f => f.Code).ToDictionary(group => group.Key, group => group.Count());
+        var matches = scoped.Where(f => string.IsNullOrEmpty(code) || f.Code == code).ToArray();
+        var count = matches.Length;
         limit = Math.Clamp(limit, 1, 200);
         offset = Math.Clamp(offset, 0, Math.Max(0, (count - 1) / limit * limit));
         return Ok(new
@@ -55,7 +56,7 @@ public sealed class ReportController(ReportStore store, ILibraryManager librarie
             Available = true, report.StartedUtc, report.FinishedUtc, report.Roots,
             report.UpdatedUtc, report.State, report.CurrentPath, Paused = control.Paused,
             report.Directories, report.Titles, report.Seasons, report.Videos,
-            Total = report.Findings.Count, Filtered = count, Offset = offset,
+            Total = report.Findings.Count, Counts = counts, Filtered = count, Offset = offset,
             Items = matches.Skip(offset).Take(limit).ToArray()
         });
     }

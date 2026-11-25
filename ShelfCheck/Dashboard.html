@@ -13,6 +13,10 @@
     #shelfCheckPage .sc-stats strong { display:block;font-size:1.8em;font-variant-numeric:tabular-nums; }
     #shelfCheckPage .sc-stats span { opacity:.7;font-size:.9em; }
     #shelfCheckPage .sc-path { font-size:.9em;opacity:.8;overflow-wrap:anywhere; }
+    #shelfCheckPage .sc-facets { display:flex;gap:.5em;flex-wrap:wrap;margin:1em 0; }
+    #shelfCheckPage .sc-facets button { border:1px solid #ffffff30;border-radius:20px;padding:.65em 1em;background:#ffffff09;color:inherit;cursor:pointer; }
+    #shelfCheckPage .sc-facets button[aria-pressed=true] { border-color:#00a4dc;background:#00a4dc26; }
+    #shelfCheckPage summary { cursor:pointer; }
     #shelfCheckPage fieldset { border:1px solid #ffffff26; border-radius:8px;padding:1em; }
     #shelfCheckPage table td, #shelfCheckPage table th { padding:.6em;vertical-align:top;border-bottom:1px solid #ffffff16; }
     #shelfCheckPage table small { opacity:.7;max-width:30em; }
@@ -23,6 +27,14 @@
     #shelfCheckPage dialog { color:inherit;background:#202020;border:1px solid #ffffff40;border-radius:12px;max-width:800px;width:85%;padding:1.5em; }
     #shelfCheckPage dialog::backdrop { background:#000a; }
     @media(max-width:600px) { #shelfCheckPage .content-primary {padding:1em;} #shelfCheckPage .sc-card {padding:.8em;} }
+    @media(max-width:700px) {
+      #shelfCheckPage table, #shelfCheckPage tbody, #shelfCheckPage tr, #shelfCheckPage td { display:block;width:100%;box-sizing:border-box; }
+      #shelfCheckPage thead { display:none; }
+      #shelfCheckPage tbody tr { border:1px solid #ffffff26;border-radius:8px;margin:.8em 0;padding:.4em; }
+      #shelfCheckPage table td { border:0;overflow-wrap:anywhere; }
+      #shelfCheckPage td::before { content:attr(data-label);display:block;font-size:.8em;opacity:.65;margin-bottom:.3em; }
+      #shelfCheckPage td:empty { display:none; }
+    }
   </style>
   <div data-role="content"><div class="content-primary">
     <h1>ShelfCheck</h1>
@@ -31,9 +43,9 @@
       <button is="emby-button" class="raised" data-pane="dates" aria-pressed="false">Datumsabgleich</button>
     </nav>
     <section data-panel="files">
-    <p>Prüft die lokalen Videos, Titelposter und Staffelordner deiner Bibliotheken.</p>
-    <details class="sc-card" open data-id="selection">
-      <summary>Bibliotheken für diesen Scan</summary>
+    <p>Prüft lokale Videos, NFO-Dateien, Titelposter und Staffelordner deiner Bibliotheken. NFO-Inhalte werden nicht gelesen.</p>
+    <details class="sc-card" data-id="selection">
+      <summary data-id="selection-summary">Bibliotheken für diesen Scan</summary>
       <p>Haken entfernen, um eine Bibliothek vom Dateiscan auszuschließen.</p>
       <fieldset data-id="libraries"><legend>Einbezogene Bibliotheken</legend></fieldset>
       <button is="emby-button" class="raised" data-action="save" disabled>Auswahl speichern</button>
@@ -59,6 +71,7 @@
     <h2 data-id="report-title">Ergebnisse</h2>
     <p data-id="summary">Bericht wird geladen …</p>
     <section data-id="report" hidden>
+      <div class="sc-facets" data-id="facets" role="group" aria-label="Befunde filtern"></div>
       <div class="sc-card">
         <h3>Auswahl bearbeiten</h3>
         <button is="emby-button" class="raised" data-action="select-page">Sichtbare Treffer auswählen</button>
@@ -93,6 +106,7 @@
         <label>Befund<select is="emby-select" data-id="code">
           <option value="">Alle Befunde</option><option value="NoVideo">Ohne Video</option>
           <option value="OnlyExtras">Nur Trailer und Extras</option>
+          <option value="MissingNfo">NFO fehlt</option>
           <option value="MissingCover">Poster fehlt</option><option value="PlaceholderCover">Platzhaltercover</option><option value="MissingSeason">Staffelordner fehlt</option>
           <option value="Unchecked">Ungeprüft</option><option value="Layout">Ablage prüfen</option>
         </select></label>
@@ -109,17 +123,31 @@
     <section data-panel="dates" hidden>
       <h2>Hinzugefügt am</h2>
       <p>Überträgt das vorhandene Veröffentlichungsdatum von Filmen, Serien und Episoden. Wähle die Bibliotheken aus, die geändert werden dürfen.</p>
-      <fieldset data-date="libraries"><legend>Freigegebene Bibliotheken</legend></fieldset>
-      <button is="emby-button" class="raised" data-date="save" disabled>Auswahl speichern</button>
-      <div style="display:flex;flex-wrap:wrap;gap:.5em;margin-top:1.5em">
-        <button is="emby-button" class="raised" data-date="preview" disabled>Vorschau für gesamten Bestand</button>
+      <details class="sc-card" data-date="selection">
+        <summary data-date="selection-summary">Freigegebene Bibliotheken</summary>
+        <fieldset data-date="libraries"><legend>Auswahl bearbeiten</legend></fieldset>
+        <button is="emby-button" class="raised" data-date="save" disabled>Auswahl speichern</button>
+      </details>
+      <div class="sc-card">
+      <p>Direkt starten oder optional den gesamten Bestand als Vorschau prüfen. Spätere Abgleiche bearbeiten neue, geänderte und offene Einträge.</p>
+      <div style="display:flex;flex-wrap:wrap;gap:.5em;margin-top:1em">
+        <button is="emby-button" class="raised" data-date="preview" disabled>Gesamten Bestand als Vorschau prüfen</button>
         <button is="emby-button" class="raised button-submit" data-date="apply" disabled>Datumsabgleich starten</button>
+        <button is="emby-button" class="raised" data-date="retry" disabled>Offene Einträge erneut prüfen</button>
         <button is="emby-button" class="raised" data-date="pause" hidden>Nach aktuellem Eintrag pausieren</button>
         <button is="emby-button" class="raised" data-date="abort" hidden>Abbrechen</button>
         <button is="emby-button" class="raised button-submit" data-date="resume" hidden>Fortsetzen</button>
         <button is="emby-button" class="raised" data-date="end" hidden>Lauf beenden</button>
       </div>
       <p role="status" data-date="status">Wird geladen …</p>
+      <progress data-date="progress" max="100" value="0" hidden></progress>
+      <div class="sc-stats" data-date="live-stats" hidden>
+        <div><strong data-date="live-total">0</strong><span>Kandidaten</span></div>
+        <div><strong data-date="live-done">0</strong><span>Bearbeitet</span></div>
+        <div><strong data-date="live-changed">0</strong><span>Geändert / würde ändern</span></div>
+        <div><strong data-date="live-open">0</strong><span>Hinweise / Fehler</span></div>
+      </div>
+      </div>
       <p role="alert" data-date="error"></p>
       <h2>Laufverlauf</h2>
       <label>Lauf <select is="emby-select" data-date="history"><option value="">Noch keine Läufe</option></select></label>
@@ -190,7 +218,7 @@
     page.dataset.ready = '1';
     const field = name => page.querySelector('[data-id="' + name + '"]');
     const button = name => page.querySelector('[data-action="' + name + '"]');
-    const labels = { NoVideo: 'Ohne Video', OnlyExtras: 'Nur Trailer und Extras', MissingCover: 'Poster fehlt', PlaceholderCover: 'Platzhaltercover', MissingSeason: 'Staffelordner fehlt', Unchecked: 'Ungeprüft', Layout: 'Ablage prüfen' };
+    const labels = { NoVideo: 'Ohne Video', OnlyExtras: 'Nur Trailer und Extras', MissingNfo: 'NFO fehlt', MissingCover: 'Poster fehlt', PlaceholderCover: 'Platzhaltercover', MissingSeason: 'Staffelordner fehlt', Unchecked: 'Ungeprüft', Layout: 'Ablage prüfen' };
     const limit = 50;
     let offset = 0, sequence = 0, timer, typing, taskId, previousRun, generation = 0;
     let active = false, changing = false, scanBusy = false, paused = false, selectionLoaded = false, savedSelection = '';
@@ -259,6 +287,7 @@
     const chosen = () => [...field('libraries').querySelectorAll('input:checked')].map(x => x.value).sort().join();
     function selectionControls() {
       const dirty = selectionLoaded && chosen() !== savedSelection;
+      field('selection-summary').textContent = 'Bibliotheken für diesen Scan · ' + field('libraries').querySelectorAll('input:checked').length + ' ausgewählt';
       field('libraries').disabled = scanBusy || changing;
       button('save').disabled = !dirty || scanBusy || changing;
       button('start').disabled = !selectionLoaded || scanBusy || changing || dirty || !chosen();
@@ -301,6 +330,14 @@
         lib.value = selected;
         const roots = data.Roots.map(r => { const li = document.createElement('li'); li.textContent = r.Library + ' · ' + r.Path; return li; });
         field('roots').replaceChildren(...roots);
+        const facetCounts = data.Counts || {};
+        field('facets').replaceChildren(...[['', 'Alle Befunde', Object.values(facetCounts).reduce((sum,n)=>sum+n,0)],
+          ...Object.entries(labels).filter(([code])=>facetCounts[code]).map(([code,label])=>[code,label,facetCounts[code]])].map(([code,label,count])=>{
+          const filter=document.createElement('button');filter.type='button';filter.textContent=label+' · '+count.toLocaleString('de-DE');
+          filter.setAttribute('aria-pressed',String(field('code').value===code));
+          filter.onclick=()=>{field('code').value=code;offset=0;selectedPaths.clear();field('all-matching').checked=false;loadReport();};
+          return filter;
+        }));
         visibleItems=data.Items;
         field('rows').replaceChildren(...data.Items.map(item => {
           const tr = document.createElement('tr'), path = cell(item.Path);
@@ -314,7 +351,9 @@
             input.onchange=()=>{if(input.checked)selectedPaths.add(item.Path);else selectedPaths.delete(item.Path);updateSelection();};
             select.append(input);
           }
-          kind.append(detail); tr.append(select,kind, cell(item.Library), cell(item.Kind), path); return tr;
+          kind.append(detail); tr.append(select,kind, cell(item.Library), cell(item.Kind), path);
+          [...tr.children].forEach((td,index)=>td.dataset.label=['Auswahl','Befund','Bibliothek','Typ','Pfad'][index]);
+          return tr;
         }));
         offset = data.Offset;
         field('range').textContent = data.Filtered ? (offset + 1) + '–' + (offset + data.Items.length) + ' von ' + data.Filtered + ' Befunden' : 'Keine passenden Befunde.';
@@ -420,6 +459,7 @@
       Skipped: 'Übersprungen', Conflict: 'Zwischenzeitlich geändert', Failed: 'Fehlgeschlagen',
       Restored: 'Wiederhergestellt', Writing: 'Speicherung begonnen', Pending: 'Offen' };
     const kinds = { Movie: 'Film', Series: 'Serie', Episode: 'Episode' };
+    const strategies={Full:'Gesamter Bestand',Incremental:'Neue und geänderte Einträge',Preview:'Änderungskandidaten aus der Vorschau',Retry:'Offene Einträge',Undo:'Änderungen eines Laufs rückgängig machen'};
     let visible = false, polling, view = 0, request = 0, offset = 0, busy = false, data, report, librariesKey, historyKey;
     const date = ticks => new Date(ticks / 10000 - 62135596800000);
     const day = ticks => ticks ? date(ticks).toLocaleDateString('de-DE', { timeZone: 'UTC' }) : '–';
@@ -438,7 +478,9 @@
       ui('save').disabled = !dirty || !!(active || paused || busy);
       ui('preview').disabled = dirty || !data.Selection.length || !!(active || paused || busy);
       ui('apply').disabled = dirty || !data.CanApply || !!(active || paused || busy);
-      ui('apply').textContent = data.Incremental ? 'Neue und geänderte Einträge abgleichen' : 'Datumsabgleich starten';
+      ui('apply').textContent = data.PreviewAvailable ? 'Vorschauänderungen übernehmen' : data.Incremental ? 'Neue und geänderte Einträge abgleichen' : 'Datumsabgleich direkt starten';
+      ui('retry').disabled = dirty || !data.CanApply || !!(active || paused || busy);
+      ui('selection-summary').textContent = 'Freigegebene Bibliotheken · ' + selected().length + ' ausgewählt';
       ui('pause').hidden = !active;
       ui('abort').hidden = !active;
       ui('resume').hidden = ui('end').hidden = !paused;
@@ -449,16 +491,31 @@
         (active.Phase === 'Waiting' ? 'Wartet auf den Jellyfin-Bibliotheksscan. ' :
           active.Phase === 'Preparing' ? 'Einträge werden ermittelt. ' : 'Lauf aktiv. ') +
           (active.Total ? active.Done.toLocaleString('de-DE') + ' von ' + active.Total.toLocaleString('de-DE') + ' bearbeitet. ' : '') +
+          (active.Examined ? 'Schnellprüfung: '+active.Examined.toLocaleString('de-DE')+' · unverändert ausgelassen: '+active.Cached.toLocaleString('de-DE')+'. ' : '') +
           (active.CurrentItem ? 'Aktuell: ' + active.CurrentItem + '. ' : '') +
+          (activeRun() ? 'Laufzeit '+Math.max(0,Math.floor((Date.now()-date(activeRun().Started).getTime())/60000))+' Min. ' : '') +
           (active.UpdatedUtc ? 'Letzte Aktivität ' + new Date(active.UpdatedUtc).toLocaleTimeString('de-DE') : '') :
         paused ? 'Pausiert. ' + (paused.Message || '') :
         !data.Selection.length ? 'Wähle die Bibliotheken aus und speichere deine Auswahl.' :
-        !data.CanApply ? 'Erstelle zuerst eine Vorschau für diese Auswahl.' : 'Bereit.';
+        'Bereit. Die Vorschau ist optional.';
+      const shown = active || (report ? {Total:Object.values(report.Counts).reduce((sum,n)=>sum+n,0),
+        Done:Object.entries(report.Counts).filter(([key])=>!['Pending','Writing'].includes(key)).reduce((sum,[,n])=>sum+n,0)} : null);
+      const counts = report && (!active || report.Run.Id===active.Id) ? report.Counts : {};
+      ui('live-stats').hidden = !shown;
+      ui('progress').hidden = !active;
+      ui('progress').value = active?.Total ? 100*active.Done/active.Total : 0;
+      if (active && !active.Total) ui('progress').removeAttribute('value');
+      for (const [name,value] of Object.entries({'live-total':shown?.Total||0,'live-done':shown?.Done||0,
+        'live-changed':(counts.Changed||0)+(counts.Proposed||0)+(counts.Restored||0),
+        'live-open':(counts.Missing||0)+(counts.Failed||0)+(counts.Conflict||0)+(counts.Skipped||0)}))
+        ui(name).textContent=value.toLocaleString('de-DE');
     }
+    function activeRun() { return data?.History.find(run=>run.Id===data.Active?.Id); }
     function renderStatus(next) {
       data = next;
       const key = JSON.stringify([data.Libraries, data.Selection]);
       if (key !== librariesKey) {
+        if (!librariesKey && !data.Selection.length) ui('selection').open=true;
         librariesKey = key;
         page.renderLibraryGroups(ui('libraries'), data.Libraries, library=>data.Selection.includes(library.Id), renderControls);
       }
@@ -504,7 +561,8 @@
         ui('report').hidden = false;
         ui('copyfallback').hidden = true;
         ui('counts').textContent = summary(result);
-        ui('note').textContent = result.Run.Message || '';
+        ui('note').textContent = [strategies[result.Run.Strategy] || '',result.Run.Examined ?
+          'Schnellprüfung '+result.Run.Examined.toLocaleString('de-DE')+' · unverändert ausgelassen '+result.Run.Cached.toLocaleString('de-DE') : '',result.Run.Message || ''].filter(Boolean).join(' · ');
         ui('rows').replaceChildren(...result.Items.map(item => {
           const tr = document.createElement('tr'), title = textCell('');
           if (item.Name) {
@@ -526,6 +584,7 @@
             outcome.append(detail);
           }
           tr.append(title, textCell(day(item.Before)), textCell(day(item.After)), outcome);
+          [...tr.children].forEach((td,index)=>td.dataset.label=['Eintrag','Vorher','Ziel','Ergebnis'][index]);
           return tr;
         }));
         ui('range').textContent = result.Total ? (offset + 1) + '–' + (offset + result.Items.length) + ' von ' + result.Total : 'Keine passenden Einträge.';
@@ -553,10 +612,11 @@
         renderControls();
       }
     }
-    for (const name of ['preview', 'apply', 'pause', 'resume', 'end', 'abort']) {
+    for (const name of ['preview', 'apply', 'retry', 'pause', 'resume', 'end', 'abort']) {
       ui(name).onclick = () => {
         if (name === 'apply' && !data?.Incremental && !window.confirm('Veröffentlichungsdatum für die freigegebenen Bibliotheken übernehmen?')) return;
         if (name === 'end' && !window.confirm('Lauf beenden? Bereits übernommene Änderungen bleiben im Verlauf.')) return;
+        if (['preview','apply','retry'].includes(name)) ui('selection').open=false;
         action('/' + name);
       };
     }
@@ -572,7 +632,8 @@
       if (!report) return;
       const run = report.Run;
       const message = ['ShelfCheck · ' + modes[run.Mode] + ' #' + run.Id + ' · ' + states[run.State],
-        'Beginn: ' + stamp(run.Started), summary(report), run.Message || '',
+        'Beginn: ' + stamp(run.Started), 'Prüfart: '+(strategies[run.Strategy] || 'Standard'), summary(report),
+        'Schnellprüfung: '+(run.Examined || 0)+' · unverändert ausgelassen: '+(run.Cached || 0),run.Message || '',
         ...(report.Items.length ? ['', 'Angezeigte Einträge:'] : []),
         ...report.Items.map(item => (item.Name || 'Eintrag') + (kinds[item.Kind] ? ' · ' + kinds[item.Kind] : '') +
           ' · ' + day(item.Before) + ' → ' + day(item.After) + ' · ' + outcomes[item.Status] +

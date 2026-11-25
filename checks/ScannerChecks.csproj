@@ -6,6 +6,9 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="Jellyfin.Common" Version="12.4.0" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.14" />
+    <Compile Include="../ShelfCheck/DateRunStore.cs" Link="DateRunStore.cs" />
     <Compile Include="../ShelfCheck/Scanner.cs" Link="Scanner.cs" />
     <Compile Include="../ShelfCheck/Report.cs" Link="Report.cs" />
     <Compile Include="../ShelfCheck/BrokenLinkFile.cs" Link="BrokenLinkFile.cs" />

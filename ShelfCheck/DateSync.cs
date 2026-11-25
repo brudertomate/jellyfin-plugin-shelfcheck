@@ -12,12 +12,12 @@ namespace ShelfCheck;
 
 public sealed record DateLibrary(Guid Id, string Name, string[] Paths, Guid[] PhysicalIds, bool Eligible, string Type);
 public sealed record DateSyncProgress(long Id, int Done, int Total, string Phase,
-    string? CurrentItem = null, DateTime UpdatedUtc = default);
+    string? CurrentItem = null, DateTime UpdatedUtc = default, int Examined = 0, int Cached = 0);
 
 public sealed class DateSync(ILibraryManager libraries, DateRunStore store, IHostApplicationLifetime lifetime,
     ILogger<DateSync> logger) : IAsyncDisposable
 {
-    private const int BatchSize = 32;
+    private const int BatchSize = 128;
     private static readonly TimeSpan WriteDelay = TimeSpan.FromMilliseconds(100);
     private readonly object _gate = new();
     private CancellationTokenSource? _cancel;
@@ -38,8 +38,9 @@ public sealed class DateSync(ILibraryManager libraries, DateRunStore store, IHos
                 Selection = selection,
                 Active = _progress,
                 Paused = _cancel is null ? store.Unfinished() : null,
-                CanApply = scope.Included.Length > 0 && CanApply(scope),
+                CanApply = scope.Included.Length > 0,
                 Incremental = store.LastCompleted("Apply", scope.Key) is not null,
+                PreviewAvailable = AvailablePreview(scope) is not null,
                 History = store.Recent()
             };
         }
@@ -116,7 +117,7 @@ public sealed class DateSync(ILibraryManager libraries, DateRunStore store, IHos
         if (mode == "Resume")
         {
             if (unfinished is not { State: "Paused" }) return "Es gibt keinen pausierten Lauf.";
-            if (unfinished.Scope != scope.Key) return "Bibliothekspfade haben sich geändert. Beende den alten Lauf und starte eine neue Vorschau.";
+            if (unfinished.Scope != scope.Key) return "Bibliothekspfade haben sich geändert. Beende den alten Lauf und starte den Abgleich neu.";
             id = unfinished.Id;
             store.State(id, "Running");
         }
@@ -124,10 +125,15 @@ public sealed class DateSync(ILibraryManager libraries, DateRunStore store, IHos
         {
             if (unfinished is not null) return "Setze den pausierten Lauf fort oder beende ihn.";
             if (scope.Included.Length == 0) return "Wähle zuerst mindestens eine Bibliothek aus.";
-            if (mode == "Apply" && !CanApply(scope)) return "Erstelle zuerst eine Vorschau für diese Bibliotheksauswahl.";
+            if (mode is not ("Apply" or "Preview" or "Retry" or "Undo")) return "Unbekannte Aktion.";
             if (mode == "Undo" && (source is null || store.Find(source.Value) is not { Mode: "Apply" }))
                 return "Der gewählte Änderungslauf wurde nicht gefunden.";
-            id = store.Create(mode, scope.Key, started, source);
+            var baseline = store.LastCompleted("Apply", scope.Key);
+            var preview = mode == "Apply" ? AvailablePreview(scope) : null;
+            var strategy = mode == "Undo" ? "Undo" : mode == "Retry" ? "Retry" : preview is not null ? "Preview" :
+                mode == "Apply" && baseline is not null ? "Incremental" : "Full";
+            id = store.Create(mode == "Retry" ? "Apply" : mode, scope.Key, started, preview?.Id ?? source,
+                strategy, preview?.Started ?? started);
         }
 
         var cancel = CancellationTokenSource.CreateLinkedTokenSource(token, lifetime.ApplicationStopping);
@@ -138,8 +144,12 @@ public sealed class DateSync(ILibraryManager libraries, DateRunStore store, IHos
         return null;
     }
 
-    private bool CanApply(Scope scope) => store.LastCompleted("Apply", scope.Key) is not null ||
-        store.LastCompleted("Preview", scope.Key) is not null;
+    private DateRun? AvailablePreview(Scope scope)
+    {
+        var preview = store.LastCompleted("Preview", scope.Key);
+        var applied = store.LastCompleted("Apply", scope.Key);
+        return preview is not null && (applied is null || preview.Id > applied.Id) ? preview : null;
+    }
 
     private async Task RunAsync(long id, Scope scope, IProgress<double>? progress, CancellationTokenSource cancellation)
     {
@@ -151,8 +161,7 @@ public sealed class DateSync(ILibraryManager libraries, DateRunStore store, IHos
             if (!store.IsQueued(id))
             {
                 await WaitForLibraryAsync(id, 0, 0, token);
-                var ids = run.Source.HasValue ? [] : FindCandidates(scope, baseline);
-                store.Enqueue(run, ids, token);
+                await Prepare(run, scope, baseline, token);
             }
 
             var total = store.Count(id);
@@ -168,7 +177,7 @@ public sealed class DateSync(ILibraryManager libraries, DateRunStore store, IHos
                 done += batch.Count;
                 SetProgress(id, done, total, "Processing");
                 progress?.Report(100d * done / total);
-                await Task.Delay(120, token);
+                await Task.Delay(10, token);
             }
             store.State(id, "Completed");
             progress?.Report(100);
@@ -195,6 +204,47 @@ public sealed class DateSync(ILibraryManager libraries, DateRunStore store, IHos
         }
     }
 
+    private async Task Prepare(DateRun run, Scope scope, DateRun? baseline, CancellationToken token)
+    {
+        if (run.Source.HasValue)
+        {
+            store.Enqueue(run, [], token);
+            store.Preparation(run.Id, store.Count(run.Id), 0);
+            return;
+        }
+        var candidates = (run.Strategy == "Retry" ? store.OpenItems(scope.Key) : FindCandidates(scope, baseline)).Distinct().ToArray();
+        if (run.Strategy != "Incremental")
+        {
+            store.Enqueue(run, candidates, token);
+            store.Preparation(run.Id, candidates.Length, 0);
+            return;
+        }
+        var pending = new List<Guid>();
+        var examined = 0;
+        var cached = 0;
+        foreach (var ids in candidates.Chunk(256))
+        {
+            token.ThrowIfCancellationRequested();
+            await WaitForLibraryAsync(run.Id, null, null, token);
+            var checkedItems = store.Checked(ids);
+            var items = libraries.GetItemList(new InternalItemsQuery { ItemIds = ids, EnableTotalRecordCount = false }).ToDictionary(item => item.Id);
+            foreach (var id in ids)
+            {
+                var item = items.GetValueOrDefault(id);
+                if (item is not null && !item.IsVirtualItem && item.IsFileProtocol && !string.IsNullOrWhiteSpace(item.Path) && scope.Rejection(item.Path) is null &&
+                    checkedItems.TryGetValue(id, out var fingerprint) && fingerprint.Matches(
+                        item.DateCreated.Ticks, item.PremiereDate?.Ticks, item.Path)) cached++;
+                else pending.Add(id);
+            }
+            examined += ids.Length;
+            lock (_gate) _progress = _progress! with { Phase = "Preparing", Examined = examined, Cached = cached,
+                CurrentItem = items.Values.LastOrDefault()?.Name, UpdatedUtc = DateTime.UtcNow };
+            await Task.Delay(10, token);
+        }
+        store.Enqueue(run, pending, token);
+        store.Preparation(run.Id, examined, cached);
+    }
+
     private IEnumerable<Guid> FindCandidates(Scope scope, DateRun? baseline)
     {
         var query = new InternalItemsQuery
@@ -203,14 +253,11 @@ public sealed class DateSync(ILibraryManager libraries, DateRunStore store, IHos
             TopParentIds = scope.Included.SelectMany(l => l.PhysicalIds).Distinct().ToArray(),
             IsVirtualItem = false,
             EnableTotalRecordCount = false,
-            MinDateLastSaved = baseline is null ? null : new DateTime(baseline.Started, DateTimeKind.Utc).AddSeconds(-5)
+            MinDateLastSaved = baseline is null ? null : new DateTime(baseline.Since ?? baseline.Started, DateTimeKind.Utc).AddSeconds(-5)
         };
         var candidates = libraries.GetItemIds(query);
         if (baseline is null) return candidates;
-        var retry = store.RetryItems(baseline.Id);
-        if (store.LastCompleted("Preview", scope.Key) is { } preview && preview.Id > baseline.Id)
-            retry.AddRange(store.RetryItems(preview.Id));
-        return candidates.Concat(retry);
+        return candidates.Concat(store.OpenItems(scope.Key));
     }
 
     private async Task ProcessBatch(DateRun run, Scope scope, List<DateRow> batch, CancellationToken token)
@@ -222,6 +269,7 @@ public sealed class DateSync(ILibraryManager libraries, DateRunStore store, IHos
         }).ToDictionary(i => i.Id);
 
         var results = new List<DateRow>(batch.Count);
+        lock (_gate) _progress = _progress! with { CurrentItem = items.Values.LastOrDefault()?.Name, UpdatedUtc = DateTime.UtcNow };
         var writes = new List<DateRow>();
         foreach (var row in batch)
         {
@@ -278,8 +326,8 @@ public sealed class DateSync(ILibraryManager libraries, DateRunStore store, IHos
         var revision = item.DateLastSaved.Ticks;
         var premiere = item.PremiereDate;
         if (premiere is null || premiere.Value.Year <= 1)
-            return row with { Status = "Missing", Before = current, Detail = "Kein Veröffentlichungsdatum in Jellyfin.", Revision = revision };
-        if ((revision > 0 && row.Revision == revision) || item.DateCreated.Date == premiere.Value.Date)
+            return row with { Status = "Missing", Before = current, After = null, Detail = "Kein Veröffentlichungsdatum in Jellyfin.", Revision = revision };
+        if (item.DateCreated.Date == premiere.Value.Date)
             return row with { Status = "Unchanged", Before = current, After = premiere.Value.Ticks, Revision = revision };
 
         return row with { Status = run.Mode == "Preview" ? "Proposed" : "Writing", Before = current, After = premiere.Value.Ticks };
@@ -357,7 +405,7 @@ public sealed class DateSync(ILibraryManager libraries, DateRunStore store, IHos
     private void SetProgress(long id, int? done, int? total, string phase)
     {
         lock (_gate) _progress = new(id, done ?? _progress!.Done, total ?? _progress!.Total, phase,
-            _progress?.CurrentItem, DateTime.UtcNow);
+            _progress?.CurrentItem, DateTime.UtcNow, _progress?.Examined ?? 0, _progress?.Cached ?? 0);
     }
 
     private DateLibrary[] GetLibraries()
@@ -442,7 +490,7 @@ public sealed class DateSyncTask(DateSync sync) : IScheduledTask
     public string Name => "Hinzugefügt-Datum abgleichen";
     public string Key => "ShelfCheckDateSync";
     public string Category => "ShelfCheck";
-    public string Description => "Übernimmt das Veröffentlichungsdatum für freigegebene Bibliotheken nach der ersten Vorschau.";
+    public string Description => "Gleicht freigegebene Bibliotheken ab; nach dem ersten Lauf nur neue, geänderte und offene Einträge.";
     public IEnumerable<TaskTriggerInfo> GetDefaultTriggers() => [];
     public Task ExecuteAsync(IProgress<double> progress, CancellationToken cancellationToken) =>
         sync.RunScheduledAsync(progress, cancellationToken);

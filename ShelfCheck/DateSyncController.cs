@@ -22,6 +22,9 @@ public sealed class DateSyncController(DateSync sync, DateRunStore store) : Cont
     [HttpPost("Apply")]
     public IActionResult Apply() => Result(sync.Start("Apply"));
 
+    [HttpPost("Retry")]
+    public IActionResult Retry() => Result(sync.Start("Retry"));
+
     [HttpPost("Undo/{id:long}")]
     public IActionResult Undo(long id) => Result(sync.Start("Undo", id));
 

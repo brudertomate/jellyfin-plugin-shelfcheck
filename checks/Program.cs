@@ -24,6 +24,8 @@ try
     string[] expected = ["TV/Show/Staffel 02|MissingCover", "TV/Show/Staffel 02|NoVideo",
         "TV/Flat|MissingCover", "TV/Flat|MissingSeason", "Movies/Empty|MissingCover", "Movies/Empty|NoVideo",
         "Movies/Unknown|MissingCover", "Movies/Unknown/child|Unchecked", "Movies/Only|OnlyExtras", "missing|Unchecked"];
+    expected = expected.Concat(new[] { "Movies/A/A.mp4|MissingNfo", "Movies/Single.mp4|MissingNfo",
+        "TV/Flat|MissingNfo", "TV/Flat/E01.mp4|MissingNfo", "TV/Show|MissingNfo", "TV/Show/Season 01/E01.MKV|MissingNfo" }).ToArray();
     if (!actual.SequenceEqual(expected.Order()) || report.Videos != 7 || report.Titles != 7 || report.Seasons != 2)
         throw new InvalidOperationException(string.Join(Environment.NewLine, actual));
     using var cancelled = new CancellationTokenSource();
@@ -53,6 +55,26 @@ try
         excludedReport.Videos != 2)
         throw new InvalidOperationException("Excluded library was scanned.");
     Console.WriteLine("Scanner checks passed.");
+    var nfoRoot = Path.Join(root.FullName, "NfoFixtures");
+    foreach (var relative in new[] { "Movies/Folder/movie.nfo", "Movies/Folder/versions/feature.mkv",
+        "Movies/Named/film.mkv", "Movies/Named/FILM.NFO", "Movies/Missing/film.mkv",
+        "Movies/Extras/film.mkv", "Movies/Extras/movie.nfo", "Movies/Extras/extras/trailer.mkv",
+        "TV/Show/TVSHOW.NFO", "TV/Show/Season 01/E01.mkv", "TV/Show/Season 01/E01.nfo", "TV/Show/Season 01/E02.mkv" })
+    {
+        var path = Path.Join(nfoRoot, relative);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, relative.EndsWith(".nfo", StringComparison.OrdinalIgnoreCase) ? "" : "video");
+    }
+    Directory.CreateDirectory(Path.Join(nfoRoot, "Movies/Missing/film.nfo"));
+    var nfoReport = new Scanner([".mkv"], extraFolders: ["extras"]).Scan([
+        new("Movies", Path.Join(nfoRoot, "Movies"), "movies"), new("TV", Path.Join(nfoRoot, "TV"), "tvshows")
+    ], new Progress<double>(), CancellationToken.None);
+    var nfoMissing = nfoReport.Findings.Where(f => f.Code == "MissingNfo").ToArray();
+    if (nfoMissing.Length != 2 || !nfoMissing.Any(f => f.Path.EndsWith("film.mkv") && f.Detail.Contains("film.nfo")) ||
+        !nfoMissing.Any(f => f.Kind == "Episode" && f.Path.EndsWith("E02.mkv") && f.Detail.Contains("E02.nfo")))
+        throw new InvalidOperationException("NFO existence, alternate names, extras or nested movies were handled incorrectly.");
+    Console.WriteLine("NFO existence checks passed; empty NFOs count as present without content validation.");
+    DateStoreChecks.Run(Path.Join(root.FullName, "DateStore"));
     var calls = new List<string>();
     PosterSource Source(string name, PosterAttempt outcome) => new(name, _ =>
     {

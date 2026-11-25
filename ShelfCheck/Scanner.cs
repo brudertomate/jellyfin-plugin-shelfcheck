@@ -23,12 +23,14 @@ public sealed partial class Scanner(IEnumerable<string> videoExtensions, Func<st
 
     private sealed class Listing
     {
+        public string Path { get; init; } = "";
         public List<DirectoryInfo> Children { get; } = [];
         public List<string> Videos { get; } = [];
         public int Extras { get; set; }
         public bool InExtras { get; init; }
         public HashSet<string> Images { get; } = new(Names);
         public HashSet<string> Placeholders { get; } = new(Names);
+        public HashSet<string> Nfos { get; } = new(Names);
         public bool Complete { get; set; } = true;
         public bool Ignored { get; set; }
     }
@@ -47,6 +49,7 @@ public sealed partial class Scanner(IEnumerable<string> videoExtensions, Func<st
             var directory = new DirectoryInfo(_root.Path);
             var listing = Read(directory);
             if (listing.Ignored) continue;
+            CheckNfos(listing, _root.Type == "tvshows", false);
             if (_root.Type != "tvshows")
             {
                 foreach (var video in listing.Videos)
@@ -113,6 +116,8 @@ public sealed partial class Scanner(IEnumerable<string> videoExtensions, Func<st
         if (listing.Ignored) return;
         _report.Titles++;
         var series = _root.Type == "tvshows" || (_root.Type == "mixed" && listing.Children.Any(d => SeasonName().IsMatch(d.Name)));
+        var movieNfo = !series && listing.Nfos.Contains("movie.nfo");
+        CheckNfos(listing, series, movieNfo);
         var kind = series ? "Serie" : _root.Type == "movies" ? "Film" : "Titel";
         var hasSeason = false;
         var complete = listing.Complete;
@@ -129,7 +134,7 @@ public sealed partial class Scanner(IEnumerable<string> videoExtensions, Func<st
                 continue;
             }
 
-            var result = ScanSubtree(childListing, 1);
+            var result = ScanSubtree(childListing, 1, series, movieNfo);
             videos += result.Videos;
             extras += result.Extras;
             complete &= result.Complete;
@@ -153,6 +158,8 @@ public sealed partial class Scanner(IEnumerable<string> videoExtensions, Func<st
         }
 
         CheckVideos(directory.FullName, kind, videos, extras, complete);
+        if (series && videos > 0 && listing.Complete && !listing.Nfos.Contains("tvshow.nfo"))
+            Add(directory.FullName, "Serie", "MissingNfo", "Serien-NFO fehlt. Erwartet: " + Path.Combine(directory.FullName, "tvshow.nfo"));
         if (listing.Complete && !HasCover(listing, series ? "show" : "movie"))
         {
             var placeholder = HasCover(listing, series ? "show" : "movie", placeholder: true);
@@ -186,8 +193,10 @@ public sealed partial class Scanner(IEnumerable<string> videoExtensions, Func<st
             Add(path, kind, "NoVideo", "Keine Videodatei im Ordner oder seinen Unterordnern.");
     }
 
-    private (int Videos, int Extras, bool Complete) ScanSubtree(Listing listing, int depth)
+    private (int Videos, int Extras, bool Complete) ScanSubtree(Listing listing, int depth, bool series, bool movieNfo)
     {
+        movieNfo |= !series && listing.Nfos.Contains("movie.nfo");
+        CheckNfos(listing, series, movieNfo);
         var count = listing.Videos.Count;
         var extras = listing.Extras;
         var complete = listing.Complete && !listing.Ignored;
@@ -200,7 +209,7 @@ public sealed partial class Scanner(IEnumerable<string> videoExtensions, Func<st
                 continue;
             }
 
-            var result = ScanSubtree(Read(child, listing.InExtras || _extraFolders.Contains(child.Name)), depth + 1);
+            var result = ScanSubtree(Read(child, listing.InExtras || _extraFolders.Contains(child.Name)), depth + 1, series, movieNfo);
             count += result.Videos;
             extras += result.Extras;
             complete &= result.Complete;
@@ -221,7 +230,7 @@ public sealed partial class Scanner(IEnumerable<string> videoExtensions, Func<st
         })) return new Listing { Ignored = true, Complete = false };
         _report.CurrentPath = directory.FullName;
         Publish();
-        var listing = new Listing { InExtras = inExtras };
+        var listing = new Listing { InExtras = inExtras, Path = directory.FullName };
         try
         {
             if (directory.Attributes.HasFlag(FileAttributes.ReparsePoint) && directory.Exists)
@@ -245,7 +254,7 @@ public sealed partial class Scanner(IEnumerable<string> videoExtensions, Func<st
 
                 if (entry is DirectoryInfo subdirectory)
                     listing.Children.Add(subdirectory);
-                else if (_videoExtensions.Contains(entry.Extension) || ImageExtensions.Contains(entry.Extension))
+                else if (_videoExtensions.Contains(entry.Extension) || ImageExtensions.Contains(entry.Extension) || Names.Equals(entry.Extension, ".nfo"))
                 {
                     if (entry.Attributes.HasFlag(FileAttributes.ReparsePoint) && entry.ResolveLinkTarget(true)?.Exists != true)
                     {
@@ -259,6 +268,8 @@ public sealed partial class Scanner(IEnumerable<string> videoExtensions, Func<st
                         else
                             listing.Videos.Add(entry.Name);
                     }
+                    else if (Names.Equals(entry.Extension, ".nfo"))
+                        listing.Nfos.Add(entry.Name);
                     else
                     {
                         var images = PlaceholderImages.Identify(entry.FullName, ((FileInfo)entry).Length) is null
@@ -286,4 +297,17 @@ public sealed partial class Scanner(IEnumerable<string> videoExtensions, Func<st
 
     private void Add(string path, string kind, string code, string detail) =>
         _report.Findings.Add(new(_root.Library, path, kind, code, detail));
+
+    private void CheckNfos(Listing listing, bool series, bool movieNfo)
+    {
+        if (!listing.Complete || listing.Ignored || _root.Type is not ("movies" or "tvshows" or "mixed")) return;
+        foreach (var video in listing.Videos)
+        {
+            var name = Path.ChangeExtension(video, ".nfo");
+            if (listing.Nfos.Contains(name) || (!series && (movieNfo || listing.Nfos.Contains("movie.nfo")))) continue;
+            Add(Path.Combine(listing.Path, video), series ? "Episode" : "Film", "MissingNfo",
+                (series ? "Episoden-NFO fehlt. Erwartet: " : "Film-NFO fehlt. Erwartet: ") + Path.Combine(listing.Path, name) +
+                (series ? "" : " (alternativ movie.nfo im Filmordner)."));
+        }
+    }
 }
